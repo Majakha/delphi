@@ -1,7 +1,9 @@
+/// <reference path="./AutoResizeTextarea.tsx" />
 import React from "react";
 import { Draggable } from "react-beautiful-dnd";
 import { X, GripVertical } from "lucide-react";
 import { Subsection } from "../types";
+import AutoResizeTextarea from "./AutoResizeTextarea";
 
 interface SubsectionCardProps {
   subsection: Subsection;
@@ -76,14 +78,11 @@ const SubsectionCard: React.FC<SubsectionCardProps> = ({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Notes
                 </label>
-                <textarea
+                <AutoResizeTextarea
                   value={subsection.additionalNotes}
-                  onChange={(e) =>
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
                     handleChange("additionalNotes", e.target.value)
                   }
-                  className="input-field resize-none"
-                  rows={2}
-                  placeholder="Add notes or comments..."
                 />
               </div>
             </div>

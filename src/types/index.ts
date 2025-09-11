@@ -9,24 +9,40 @@ export interface Subsection {
   id: string;
   title: string;
   time: number;
-  note: string;
+  rating: number;
+  description: string;
+  additionalNotes: string;
+  enabled: boolean;
+  type: "subsection";
 }
+
+export interface Break {
+  id: string;
+  title: string;
+  duration: number;
+  enabled: boolean;
+  type: "break";
+}
+
+export type SubsectionItem = Subsection | Break;
 
 export interface Section {
   id: string;
   title: string;
   time: number;
   rating: number;
-  note: string;
+  description: string;
+  additionalNotes: string;
   sensors: string[];
-  subsections: Subsection[];
-  type: 'section' | 'break';
+  subsections: SubsectionItem[];
+  type: "section";
+  enabled: boolean;
 }
 
 export interface Protocol {
   id: string;
   name: string;
-  type: 'in-lab' | 'real-world';
+  type: "in-lab" | "real-world";
   sections: Section[];
   createdAt: Date;
   updatedAt: Date;
@@ -43,4 +59,4 @@ export interface DragResult {
     droppableId: string;
     index: number;
   };
-} 
+}

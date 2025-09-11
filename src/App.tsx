@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Protocol, Section, Subsection, Break } from "./types";
+import { Protocol, Section, Subsection } from "./types";
 import ProtocolEditor from "./components/ProtocolEditor";
 import Login from "./components/Login";
-import Header from "./components/Header";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { AlertCircle, X } from "lucide-react";
 import {
@@ -151,7 +150,7 @@ const AppContent: React.FC = () => {
             .filter((sub) => sub.enabled)
             .reduce((subSum, sub) => {
               if (sub.type === "break") {
-                return subSum + (sub as Break).duration;
+                return subSum + (sub as Subsection).time;
               }
               return subSum + (sub as Subsection).time;
             }, 0);
@@ -280,28 +279,12 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
-      <div className="bg-white shadow-sm">
-        <Header
-          protocol={protocol}
-          onProtocolChange={handleProtocolChange}
-          protocolName={protocol.name}
-          lastUpdated={protocol.updatedAt}
-          enabledSections={enabledSections.length}
-          totalSections={totalSections}
-          enabledTotalTime={enabledTotalTime}
-          showAdvanced={showAdvanced}
-          onToggleAdvanced={() => setShowAdvanced(!showAdvanced)}
-          onImport={handleImport}
-          onExport={handleExport}
-          onCompleteProtocol={handleCompleteProtocol}
-        />
-      </div>
+      <div className="bg-white shadow-sm"></div>
 
       <main className="flex-1 overflow-hidden">
         <ProtocolEditor
           protocol={protocol}
           onProtocolChange={handleProtocolChange}
-          showAdvanced={showAdvanced}
         />
       </main>
 

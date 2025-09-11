@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { Draggable, Droppable, DropResult } from 'react-beautiful-dnd';
-import { X, GripVertical, Plus, ChevronDown, ChevronRight } from 'lucide-react';
-import { Section, Subsection } from '../types';
-import RatingStars from './RatingStars';
-import SensorSelector from './SensorSelector';
-import SubsectionCard from './SubsectionCard';
+import React, { useState } from "react";
+import { Draggable, Droppable, DropResult } from "react-beautiful-dnd";
+import { X, GripVertical, Plus, ChevronDown, ChevronRight } from "lucide-react";
+import { Section, Subsection } from "../types";
+import RatingStars from "./RatingStars";
+import SensorSelector from "./SensorSelector";
+import SubsectionCard from "./SubsectionCard";
 
 interface SectionCardProps {
   section: Section;
@@ -17,7 +17,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
   section,
   index,
   onUpdate,
-  onDelete
+  onDelete,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -25,30 +25,35 @@ const SectionCard: React.FC<SectionCardProps> = ({
   const handleChange = (field: keyof Section, value: any) => {
     onUpdate({
       ...section,
-      [field]: value
+      [field]: value,
     });
   };
 
   const handleSubsectionUpdate = (updatedSubsection: Subsection) => {
     const updatedSubsections = section.subsections.map((sub: Subsection) =>
-      sub.id === updatedSubsection.id ? updatedSubsection : sub
+      sub.id === updatedSubsection.id ? updatedSubsection : sub,
     );
-    handleChange('subsections', updatedSubsections);
+    handleChange("subsections", updatedSubsections);
   };
 
   const handleSubsectionDelete = (subsectionId: string) => {
-    const updatedSubsections = section.subsections.filter((sub: Subsection) => sub.id !== subsectionId);
-    handleChange('subsections', updatedSubsections);
+    const updatedSubsections = section.subsections.filter(
+      (sub: Subsection) => sub.id !== subsectionId,
+    );
+    handleChange("subsections", updatedSubsections);
   };
 
   const handleAddSubsection = () => {
     const newSubsection: Subsection = {
       id: `subsection-${Date.now()}`,
-      title: '',
+      title: "",
       time: 0,
-      note: ''
+      additionalNotes: "",
+      description: "",
+      enabled: true,
+      type: "subsection",
     };
-    handleChange('subsections', [...section.subsections, newSubsection]);
+    handleChange("subsections", [...section.subsections, newSubsection]);
   };
 
   const handleSubsectionDragEnd = (result: DropResult) => {
@@ -58,10 +63,15 @@ const SectionCard: React.FC<SectionCardProps> = ({
     const [reorderedItem] = items.splice(result.source.index, 1);
     items.splice(result.destination.index, 0, reorderedItem);
 
-    handleChange('subsections', items);
+    handleChange("subsections", items);
   };
 
-  const totalTime = section.time + section.subsections.reduce((sum: number, sub: Subsection) => sum + sub.time, 0);
+  const totalTime =
+    section.time +
+    section.subsections.reduce(
+      (sum: number, sub: Subsection) => sum + sub.time,
+      0,
+    );
 
   return (
     <Draggable draggableId={section.id} index={index}>
@@ -70,8 +80,8 @@ const SectionCard: React.FC<SectionCardProps> = ({
           ref={provided.innerRef}
           {...provided.draggableProps}
           className={`card card-hover mb-6 ${
-            snapshot.isDragging ? 'shadow-lg rotate-1' : ''
-          } ${section.type === 'break' ? 'border-l-4 border-l-blue-500' : ''}`}
+            snapshot.isDragging ? "shadow-lg rotate-1" : ""
+          } ${"border-l-4 border-l-blue-500"}`}
         >
           <div className="flex items-start gap-3">
             <div
@@ -80,7 +90,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
             >
               <GripVertical className="w-4 h-4 text-gray-400" />
             </div>
-            
+
             <div className="flex-1 space-y-4">
               {/* Header */}
               <div className="flex items-center justify-between">
@@ -96,24 +106,24 @@ const SectionCard: React.FC<SectionCardProps> = ({
                       <ChevronRight className="w-4 h-4" />
                     )}
                   </button>
-                  
+
                   <div className="flex-1">
                     <input
                       type="text"
                       value={section.title}
-                      onChange={(e) => handleChange('title', e.target.value)}
+                      onChange={(e) => handleChange("title", e.target.value)}
                       className="input-field font-medium text-lg"
-                      placeholder={section.type === 'break' ? 'Break title' : 'Section title'}
+                      placeholder={"Section title"}
                     />
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
                   <div className="text-right">
                     <div className="text-sm text-gray-500">Total Time</div>
                     <div className="font-semibold">{totalTime} min</div>
                   </div>
-                  
+
                   <button
                     type="button"
                     onClick={() => onDelete(section.id)}
@@ -135,29 +145,38 @@ const SectionCard: React.FC<SectionCardProps> = ({
                       <input
                         type="number"
                         value={section.time}
-                        onChange={(e) => handleChange('time', parseInt(e.target.value) || 0)}
+                        onChange={(e) =>
+                          handleChange("time", parseInt(e.target.value) || 0)
+                        }
                         className="input-field"
                         min="0"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Importance Rating
                       </label>
                       <RatingStars
                         rating={section.rating}
-                        onRatingChange={(rating) => handleChange('rating', rating)}
+                        onRatingChange={(rating) =>
+                          handleChange("rating", rating)
+                        }
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Type
                       </label>
                       <select
                         value={section.type}
-                        onChange={(e) => handleChange('type', e.target.value as 'section' | 'break')}
+                        onChange={(e) =>
+                          handleChange(
+                            "type",
+                            e.target.value as "section" | "break",
+                          )
+                        }
                         className="input-field"
                       >
                         <option value="section">Section</option>
@@ -173,7 +192,11 @@ const SectionCard: React.FC<SectionCardProps> = ({
                       onClick={() => setShowAdvanced(!showAdvanced)}
                       className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
                     >
-                      {showAdvanced ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      {showAdvanced ? (
+                        <ChevronDown className="w-4 h-4" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4" />
+                      )}
                       Advanced Fields
                     </button>
                   </div>
@@ -187,7 +210,9 @@ const SectionCard: React.FC<SectionCardProps> = ({
                         </label>
                         <SensorSelector
                           selectedSensors={section.sensors}
-                          onSensorsChange={(sensors) => handleChange('sensors', sensors)}
+                          onSensorsChange={(sensors) =>
+                            handleChange("sensors", sensors)
+                          }
                         />
                       </div>
 
@@ -197,8 +222,10 @@ const SectionCard: React.FC<SectionCardProps> = ({
                           Notes
                         </label>
                         <textarea
-                          value={section.note}
-                          onChange={(e) => handleChange('note', e.target.value)}
+                          value={section.additionalNotes}
+                          onChange={(e) =>
+                            handleChange("additionalNotes", e.target.value)
+                          }
                           className="input-field resize-none"
                           rows={3}
                           placeholder="Add notes or comments for this section..."
@@ -222,7 +249,10 @@ const SectionCard: React.FC<SectionCardProps> = ({
                     </div>
 
                     {section.subsections.length > 0 ? (
-                      <Droppable droppableId={`subsections-${section.id}`} type="subsection">
+                      <Droppable
+                        droppableId={`subsections-${section.id}`}
+                        type="subsection"
+                      >
                         {(provided) => (
                           <div
                             ref={provided.innerRef}
@@ -244,7 +274,10 @@ const SectionCard: React.FC<SectionCardProps> = ({
                       </Droppable>
                     ) : (
                       <div className="text-center py-6 text-gray-500">
-                        <p>No subsections yet. Click "Add Subsection" to get started.</p>
+                        <p>
+                          No subsections yet. Click "Add Subsection" to get
+                          started.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -258,4 +291,4 @@ const SectionCard: React.FC<SectionCardProps> = ({
   );
 };
 
-export default SectionCard; 
+export default SectionCard;

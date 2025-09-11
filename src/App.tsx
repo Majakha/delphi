@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Protocol, Section, Subsection } from "./types";
 import ProtocolEditor from "./components/ProtocolEditor";
 import Login from "./components/Login";
+import Header from "./components/Header";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { AlertCircle, X } from "lucide-react";
 import {
@@ -279,9 +280,10 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
+      <Header />
       <div className="bg-white shadow-sm"></div>
 
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-y-auto">
         <ProtocolEditor
           protocol={protocol}
           onProtocolChange={handleProtocolChange}

@@ -165,7 +165,7 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
   );
 
   return (
-    <div className="max-w-[50%] mx-auto p-6">
+    <div className="max-w-4xl mx-auto p-6 pb-24">
       {/* Header */}
       <div className="card mb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

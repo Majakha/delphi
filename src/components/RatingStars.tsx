@@ -1,27 +1,29 @@
-import React from 'react';
-import { Star } from 'lucide-react';
+import React from "react";
+import { Star } from "lucide-react";
 
 interface RatingStarsProps {
   rating: number;
   onRatingChange: (rating: number) => void;
-  size?: 'sm' | 'md' | 'lg';
+  size?: "sm" | "md" | "lg";
   readonly?: boolean;
+  disabled?: boolean;
 }
 
 const RatingStars: React.FC<RatingStarsProps> = ({
   rating,
   onRatingChange,
-  size = 'md',
-  readonly = false
+  size = "md",
+  readonly = false,
+  disabled = false,
 }) => {
   const sizeClasses = {
-    sm: 'w-4 h-4',
-    md: 'w-5 h-5',
-    lg: 'w-6 h-6'
+    sm: "w-4 h-4",
+    md: "w-5 h-5",
+    lg: "w-6 h-6",
   };
 
   const handleStarClick = (starRating: number) => {
-    if (!readonly) {
+    if (!readonly && !disabled) {
       onRatingChange(starRating);
     }
   };
@@ -33,16 +35,20 @@ const RatingStars: React.FC<RatingStarsProps> = ({
           key={star}
           type="button"
           onClick={() => handleStarClick(star)}
-          disabled={readonly}
+          disabled={readonly || disabled}
           className={`transition-colors duration-200 ${
-            readonly ? 'cursor-default' : 'cursor-pointer hover:scale-110'
+            readonly || disabled
+              ? "cursor-not-allowed"
+              : "cursor-pointer hover:scale-110"
           }`}
         >
           <Star
             className={`${sizeClasses[size]} ${
               star <= rating
-                ? 'fill-yellow-400 text-yellow-400'
-                : 'text-gray-300'
+                ? disabled
+                  ? "fill-gray-300 text-gray-300"
+                  : "fill-yellow-400 text-yellow-400"
+                : "text-gray-300"
             }`}
           />
         </button>
@@ -51,4 +57,4 @@ const RatingStars: React.FC<RatingStarsProps> = ({
   );
 };
 
-export default RatingStars; 
+export default RatingStars;

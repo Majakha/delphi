@@ -6,6 +6,7 @@ interface AutoResizeTextareaProps {
   onClick?: (e: React.MouseEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
   minRows?: number;
   maxRows?: number;
 }
@@ -15,6 +16,7 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
   onChange,
   onClick,
   placeholder,
+  disabled = false,
   className = "",
   minRows = 1,
   maxRows = 10,
@@ -30,10 +32,13 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
 
     // Calculate the line height
     const computedStyle = window.getComputedStyle(textarea);
-    const lineHeight = parseInt(computedStyle.lineHeight, 10);
+    const lineHeight = parseInt(computedStyle.lineHeight, 10) || 20; // Fallback if lineHeight isn't set
 
     // Calculate min and max heights
-    const minHeight = lineHeight * minRows;
+    // For empty textarea, use a smaller height
+    const isEmpty = !value || value.trim() === "";
+    const effectiveMinRows = isEmpty ? 1 : minRows;
+    const minHeight = lineHeight * effectiveMinRows;
     const maxHeight = lineHeight * maxRows;
 
     // Set the height based on scroll height, but within min/max bounds
@@ -42,7 +47,7 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
       Math.min(textarea.scrollHeight, maxHeight),
     );
     textarea.style.height = `${newHeight}px`;
-  }, [minRows, maxRows]);
+  }, [minRows, maxRows, value]);
 
   useEffect(() => {
     adjustHeight();
@@ -57,12 +62,17 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
   return (
     <textarea
       ref={textareaRef}
-      value={value}
+      value={value || ""}
       onChange={handleChange}
       onClick={onClick}
       placeholder={placeholder}
-      className={`resize-none overflow-hidden ${className}`}
-      style={{ minHeight: `${minRows * 1.5}em` }}
+      disabled={disabled}
+      className={`resize-none overflow-hidden ${disabled ? "cursor-not-allowed" : ""} ${className}`}
+      style={{
+        minHeight:
+          value && value.trim() ? `${minRows * 1.5}em` : `${1 * 1.2}em`,
+        padding: value && value.trim() ? undefined : "0.25rem 0.5rem", // Smaller padding when empty
+      }}
     />
   );
 };

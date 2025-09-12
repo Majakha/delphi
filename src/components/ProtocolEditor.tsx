@@ -96,23 +96,69 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
         });
       } else if (type === "subsection") {
         // Handle subsection reordering within a section
-        const sectionId = source.droppableId.replace("subsections-", "");
-        const section = protocol.sections.find((s) => s.id === sectionId);
+        const sourceSectionId = source.droppableId.replace("subsections-", "");
+        const destinationSectionId = destination.droppableId.replace(
+          "subsections-",
+          "",
+        );
 
-        if (section) {
-          const items = Array.from(section.subsections);
-          const [reorderedItem] = items.splice(source.index, 1);
-          items.splice(destination.index, 0, reorderedItem);
+        // If moving within the same section
+        if (sourceSectionId === destinationSectionId) {
+          const section = protocol.sections.find(
+            (s) => s.id === sourceSectionId,
+          );
+          if (section) {
+            const items = Array.from(section.subsections);
+            const [reorderedItem] = items.splice(source.index, 1);
+            items.splice(destination.index, 0, reorderedItem);
 
-          const updatedSection = { ...section, subsections: items };
-          const updatedSections = protocol.sections.map((s) =>
-            s.id === sectionId ? updatedSection : s,
+            const updatedSection = { ...section, subsections: items };
+            const updatedSections = protocol.sections.map((s) =>
+              s.id === sourceSectionId ? updatedSection : s,
+            );
+
+            onProtocolChange({
+              ...protocol,
+              sections: updatedSections,
+            });
+          }
+        }
+        // If moving between different sections
+        else {
+          const sourceSection = protocol.sections.find(
+            (s) => s.id === sourceSectionId,
+          );
+          const destSection = protocol.sections.find(
+            (s) => s.id === destinationSectionId,
           );
 
-          onProtocolChange({
-            ...protocol,
-            sections: updatedSections,
-          });
+          if (sourceSection && destSection) {
+            // Copy all subsections
+            const sourceItems = Array.from(sourceSection.subsections);
+            const destItems = Array.from(destSection.subsections);
+
+            // Get the item to move
+            const [movedItem] = sourceItems.splice(source.index, 1);
+
+            // Add to destination
+            destItems.splice(destination.index, 0, movedItem);
+
+            // Update both sections
+            const updatedSections = protocol.sections.map((s) => {
+              if (s.id === sourceSectionId) {
+                return { ...s, subsections: sourceItems };
+              }
+              if (s.id === destinationSectionId) {
+                return { ...s, subsections: destItems };
+              }
+              return s;
+            });
+
+            onProtocolChange({
+              ...protocol,
+              sections: updatedSections,
+            });
+          }
         }
       }
     },
@@ -165,7 +211,7 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
   );
 
   return (
-    <div className="max-w-4xl mx-auto p-6 pb-24">
+    <div className="w-full p-4 pb-24">
       {/* Header */}
       <div className="card mb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -240,7 +286,7 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
             <div
               ref={provided.innerRef}
               {...provided.droppableProps}
-              className="space-y-4"
+              className="space-y-3"
             >
               {protocol.sections.map((section, index) => (
                 <SectionCard
@@ -258,12 +304,12 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
       </DragDropContext>
 
       {/* Add Section Buttons */}
-      <div className="card mt-6">
-        <div className="flex flex-col sm:flex-row gap-3">
+      <div className="mt-4">
+        <div className="flex flex-row gap-2">
           <button
             type="button"
             onClick={handleAddSection}
-            className="btn-primary flex items-center justify-center gap-2 flex-1"
+            className="btn-primary flex items-center justify-center gap-1 text-sm px-3 py-1.5"
           >
             <Plus className="w-4 h-4" />
             Add Section
@@ -271,7 +317,7 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
           <button
             type="button"
             onClick={handleAddBreak}
-            className="btn-secondary flex items-center justify-center gap-2 flex-1"
+            className="btn-secondary flex items-center justify-center gap-1 text-sm px-3 py-1.5"
           >
             <Plus className="w-4 h-4" />
             Add Break
@@ -281,9 +327,9 @@ const ProtocolEditor: React.FC<ProtocolEditorProps> = ({
 
       {/* JSON Preview (Advanced) */}
       {showAdvanced && (
-        <div className="card mt-6">
-          <h3 className="text-lg font-semibold mb-4">JSON Preview</h3>
-          <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto text-sm">
+        <div className="mt-4 border rounded p-3">
+          <h3 className="text-sm font-semibold mb-2">JSON Preview</h3>
+          <pre className="bg-gray-100 p-2 rounded overflow-x-auto text-xs max-h-40">
             {JSON.stringify(protocol, null, 2)}
           </pre>
         </div>

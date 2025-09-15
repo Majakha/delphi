@@ -1,0 +1,34 @@
+version: "3.9"
+services:
+  api:
+    build: ./api
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: example
+      DB_NAME: mydatabase
+    ports:
+      - "3001:3001"
+    depends_on:
+      - db
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: example
+      MYSQL_DATABASE: mydatabase
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./db-init:/docker-entrypoint-initdb.d
+
+volumes:
+  db-data:

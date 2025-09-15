@@ -1,275 +1,104 @@
-const http = require("http");
-const mysql = require("mysql2/promise");
+const express = require("express");
+const { initDB } = require("./database.js");
 
-// Environment variables
-const PORT = 3001;
-const DB_CONFIG = {
-  host: process.env.DB_HOST || "localhost",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "example",
-  database: process.env.DB_NAME || "mydatabase",
-};
+// Import route modules
+const authRoutes = require("./routes/auth.js");
+const userRoutes = require("./routes/users.js");
+const sensorRoutes = require("./routes/sensors.js");
+const subsectionRoutes = require("./routes/subsections.js");
+const sectionRoutes = require("./routes/sections.js");
+const protocolRoutes = require("./routes/protocols.js");
 
-let connection;
+const app = express();
+const PORT = process.env.PORT || 3101;
 
-// Initialize database connection with retry
-async function initDB() {
-  const maxRetries = 10;
-  const retryDelay = 3000;
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      connection = await mysql.createConnection(DB_CONFIG);
-      console.log("Database connected successfully");
-      return;
-    } catch (error) {
-      console.log(
-        `Database connection attempt ${i + 1}/${maxRetries} failed. Retrying in ${retryDelay}ms...`,
-      );
-      if (i === maxRetries - 1) {
-        console.error("Database connection failed after all retries:", error);
-        process.exit(1);
-      }
-      await new Promise((resolve) => setTimeout(resolve, retryDelay));
-    }
+// CORS middleware (if needed)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-access-token",
+  );
+
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200);
+  } else {
+    next();
   }
-}
+});
 
-// Parse JSON from request body
-function parseJSON(req) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk.toString();
-    });
-    req.on("end", () => {
-      try {
-        if (body.trim() === "") {
-          resolve({});
-        } else {
-          resolve(JSON.parse(body));
-        }
-      } catch (err) {
-        reject(err);
-      }
-    });
-    req.on("error", (err) => {
-      reject(err);
-    });
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    service: "Delphi API v2",
   });
-}
-
-// CORS headers
-function setCORSHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-}
-
-// Handle password check
-async function handlePasswordCheck(req, res) {
-  try {
-    console.log("Handling password check request");
-
-    const data = await parseJSON(req);
-    console.log("Parsed data:", data);
-
-    const { password } = data;
-    if (!password) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Password required");
-      return;
-    }
-
-    const [rows] = await connection.execute(
-      "SELECT id, password FROM access_passwords WHERE password = ?",
-      [password],
-    );
-
-    if (Array.isArray(rows) && rows.length === 0) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Invalid password");
-      return;
-    }
-
-    const user = rows[0];
-    res.setHeader("Content-Type", "application/json");
-    res.end(
-      JSON.stringify({
-        message: "Password accepted",
-        userId: user.id,
-        password: user.password,
-      }),
-    );
-  } catch (error) {
-    console.error("Password check error:", error);
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain");
-    res.end("Internal server error");
-  }
-}
-
-// Handle uploads list
-async function handleUploadsList(req, res) {
-  try {
-    console.log("Handling uploads list request");
-
-    const data = await parseJSON(req);
-    const { password } = data;
-
-    if (!password) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Password required");
-      return;
-    }
-
-    // Verify password and get user ID
-    const [userRows] = await connection.execute(
-      "SELECT id FROM access_passwords WHERE password = ?",
-      [password],
-    );
-
-    if (Array.isArray(userRows) && userRows.length === 0) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Invalid password");
-      return;
-    }
-
-    const userId = userRows[0].id;
-
-    const [rows] = await connection.execute(
-      "SELECT id, protocol_id, protocol_name, protocol_data, created_at, updated_at FROM protocols WHERE password_id = ? ORDER BY updated_at DESC",
-      [userId],
-    );
-
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(rows));
-  } catch (error) {
-    console.error("Uploads list error:", error);
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain");
-    res.end("Failed to fetch uploads");
-  }
-}
-
-// Handle protocol data upload
-async function handleProtocolUpload(req, res) {
-  try {
-    console.log("Handling protocol upload request");
-
-    const data = await parseJSON(req);
-    console.log("Parsed data:", data);
-
-    const { password, protocol } = data;
-
-    if (!password) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Password required for upload");
-      return;
-    }
-
-    if (!protocol) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Protocol data required");
-      return;
-    }
-
-    // Verify password and get user ID
-    const [userRows] = await connection.execute(
-      "SELECT id FROM access_passwords WHERE password = ?",
-      [password],
-    );
-
-    if (Array.isArray(userRows) && userRows.length === 0) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Invalid password");
-      return;
-    }
-
-    const userId = userRows[0].id;
-    const protocolJson = JSON.stringify(protocol);
-
-    await connection.execute(
-      "INSERT INTO protocols (password_id, protocol_id, protocol_name, protocol_data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE protocol_name = VALUES(protocol_name), protocol_data = VALUES(protocol_data), updated_at = CURRENT_TIMESTAMP",
-      [userId, protocol.id, protocol.name || "Untitled Protocol", protocolJson],
-    );
-
-    res.setHeader("Content-Type", "application/json");
-    res.end(
-      JSON.stringify({
-        message: "Protocol uploaded successfully",
-        protocolId: protocol.id,
-        protocolName: protocol.name,
-        size: protocolJson.length,
-        userId: userId,
-      }),
-    );
-  } catch (error) {
-    console.error("Protocol upload error:", error);
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain");
-    res.end("Protocol upload failed");
-  }
-}
-
-// Create HTTP server
-const server = http.createServer(async (req, res) => {
-  try {
-    console.log(`${req.method} ${req.url}`);
-
-    setCORSHeaders(res);
-
-    // Handle OPTIONS requests for CORS
-    if (req.method === "OPTIONS") {
-      res.statusCode = 200;
-      res.end();
-      return;
-    }
-
-    const url = req.url;
-    const method = req.method;
-
-    if (url === "/api/check-password" && method === "POST") {
-      await handlePasswordCheck(req, res);
-    } else if (url === "/api/uploads" && method === "POST") {
-      await handleUploadsList(req, res);
-    } else if (url === "/api/upload" && method === "POST") {
-      await handleProtocolUpload(req, res);
-    } else {
-      res.statusCode = 404;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Not Found");
-    }
-  } catch (error) {
-    console.error("Server error:", error);
-    try {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain");
-      res.end("Internal Server Error");
-    } catch (writeError) {
-      console.error("Failed to send error response:", writeError);
-    }
-  }
 });
 
-// Handle server errors
-server.on("error", (error) => {
-  console.error("Server error:", error);
+// Mount routes
+app.use("/auth", authRoutes);
+app.use("/users", userRoutes);
+app.use("/sensors", sensorRoutes);
+app.use("/subsections", subsectionRoutes);
+app.use("/sections", sectionRoutes);
+app.use("/protocols", protocolRoutes);
+
+// Root endpoint
+app.get("/", (req, res) => {
+  res.json({
+    message: "Delphi API v2",
+    version: "2.0.0",
+    endpoints: {
+      auth: "/auth",
+      users: "/users",
+      sensors: "/sensors",
+      subsections: "/subsections",
+      sections: "/sections",
+      protocols: "/protocols",
+      health: "/health",
+    },
+  });
 });
 
-// Start server
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({
+    error: "Internal server error",
+    message:
+      process.env.NODE_ENV === "development"
+        ? err.message
+        : "Something went wrong",
+  });
+});
+
+// 404 handler
+app.use("*", (req, res) => {
+  res.status(404).json({
+    error: "Endpoint not found",
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
+
+// Initialize database and start server
 async function startServer() {
   try {
+    // Initialize database connection
     await initDB();
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Clean API server running on port ${PORT}`);
+    console.log("Database initialized successfully");
+
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`Delphi API v2 server running on port ${PORT}`);
+      console.log(`Health check: http://localhost:${PORT}/health`);
+      console.log(`API endpoints: http://localhost:${PORT}/`);
     });
   } catch (error) {
     console.error("Failed to start server:", error);
@@ -277,13 +106,20 @@ async function startServer() {
   }
 }
 
-// Handle process errors
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\nShutting down server gracefully...");
+  const { closeConnection } = require("./database.js");
+  await closeConnection();
+  process.exit(0);
 });
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+process.on("SIGTERM", async () => {
+  console.log("\nShutting down server gracefully...");
+  const { closeConnection } = require("./database.js");
+  await closeConnection();
+  process.exit(0);
 });
 
-startServer().catch(console.error);
+// Start the server
+startServer();

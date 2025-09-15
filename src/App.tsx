@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Protocol, Section, Subsection } from "./types";
 import ProtocolEditor from "./components/ProtocolEditor";
+import ProtocolOverview from "./components/ProtocolOverview";
 import Login from "./components/Login";
 import Header from "./components/Header";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -283,11 +284,16 @@ const AppContent: React.FC = () => {
       <Header />
       <div className="bg-white shadow-sm"></div>
 
-      <main className="flex-1 overflow-y-auto">
-        <ProtocolEditor
-          protocol={protocol}
-          onProtocolChange={handleProtocolChange}
-        />
+      <main className="flex-1 overflow-y-auto flex">
+        <div className="w-3/5 overflow-y-auto border-r border-gray-200">
+          <ProtocolEditor
+            protocol={protocol}
+            onProtocolChange={handleProtocolChange}
+          />
+        </div>
+        <div className="w-2/5 overflow-y-auto">
+          <ProtocolOverview protocol={protocol} />
+        </div>
       </main>
 
       {/* Validation Alert */}

@@ -5,6 +5,7 @@ import { Section, Subsection } from "../types";
 import RatingStars from "./RatingStars";
 import SensorSelector from "./SensorSelector";
 import SubsectionCard from "./SubsectionCard";
+import AutoResizeTextarea from "./AutoResizeTextarea";
 
 interface SectionCardProps {
   section: Section;
@@ -56,6 +57,19 @@ const SectionCard: React.FC<SectionCardProps> = ({
     handleChange("subsections", [...section.subsections, newSubsection]);
   };
 
+  const handleAddBreak = () => {
+    const newBreak: Subsection = {
+      id: `break-${Date.now()}`,
+      title: "",
+      time: 5,
+      additionalNotes: "",
+      description: "",
+      enabled: true,
+      type: "break",
+    };
+    handleChange("subsections", [...section.subsections, newBreak]);
+  };
+
   const handleSubsectionDragEnd = (result: DropResult) => {
     if (!result.destination) return;
 
@@ -66,12 +80,10 @@ const SectionCard: React.FC<SectionCardProps> = ({
     handleChange("subsections", items);
   };
 
-  const totalTime =
-    section.time +
-    section.subsections.reduce(
-      (sum: number, sub: Subsection) => sum + sub.time,
-      0,
-    );
+  const totalTime = section.subsections.reduce(
+    (sum: number, sub: Subsection) => sum + sub.time,
+    0,
+  );
 
   return (
     <Draggable draggableId={section.id} index={index}>
@@ -79,9 +91,9 @@ const SectionCard: React.FC<SectionCardProps> = ({
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
-          className={`card card-hover mb-6 ${
-            snapshot.isDragging ? "shadow-lg rotate-1" : ""
-          } ${"border-l-4 border-l-blue-500"}`}
+          className={`card card-hover mb-1 ${
+            snapshot.isDragging ? "shadow-lg rotate-2" : ""
+          }`}
         >
           <div className="flex items-start gap-3">
             <div
@@ -91,10 +103,10 @@ const SectionCard: React.FC<SectionCardProps> = ({
               <GripVertical className="w-4 h-4 text-gray-400" />
             </div>
 
-            <div className="flex-1 space-y-4">
+            <div className="flex-1 space-y-1">
               {/* Header */}
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 flex-1">
+                <div className="flex items-center gap-1 flex-1">
                   <button
                     type="button"
                     onClick={() => setIsExpanded(!isExpanded)}
@@ -107,149 +119,125 @@ const SectionCard: React.FC<SectionCardProps> = ({
                     )}
                   </button>
 
-                  <div className="flex-1">
+                  <div className="flex-1 flex items-center gap-4">
                     <input
                       type="text"
                       value={section.title}
                       onChange={(e) => handleChange("title", e.target.value)}
-                      className="input-field font-medium text-lg"
+                      className="input-field font-medium text-lg flex-1"
                       placeholder={"Section title"}
                     />
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-sm text-gray-500">Total Time</div>
-                    <div className="font-semibold">{totalTime} min</div>
-                  </div>
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm text-gray-500 whitespace-nowrap">
+                          Max:
+                        </label>
+                        <input
+                          type="number"
+                          value={section.time}
+                          onChange={(e) =>
+                            handleChange("time", parseInt(e.target.value) || 0)
+                          }
+                          className="input-field w-16"
+                          min="0"
+                        />
+                      </div>
+                      <div
+                        className={`flex items-center gap-1 px-3 py-1 rounded-md ${
+                          totalTime > section.time ? "bg-red-50" : "bg-blue-50"
+                        }`}
+                      >
+                        <div className="flex flex-col items-center">
+                          <span className="text-xs text-gray-500 font-medium flex items-center gap-1">
+                            Subsections
+                            {totalTime > section.time && (
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="h-3.5 w-3.5 text-red-600"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                                />
+                              </svg>
+                            )}
+                          </span>
+                          <span
+                            className={`font-semibold ${
+                              totalTime > section.time
+                                ? "text-red-600"
+                                : "text-blue-700"
+                            }`}
+                          >
+                            {totalTime} {totalTime === 1 ? "minute" : "minutes"}
+                          </span>
+                        </div>
+                      </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onDelete(section.id)}
-                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(section.id)}
+                        className="flex-shrink-0 p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               {isExpanded && (
                 <>
-                  {/* Basic Fields */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2 pt-4">
+                    {/* Notes */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Time (min)
-                      </label>
-                      <input
-                        type="number"
-                        value={section.time}
+                      <AutoResizeTextarea
+                        value={section.additionalNotes || ""}
                         onChange={(e) =>
-                          handleChange("time", parseInt(e.target.value) || 0)
+                          handleChange("additionalNotes", e.target.value)
                         }
-                        className="input-field"
-                        min="0"
+                        className="input-field resize-none"
+                        placeholder="Add notes or comments for this section..."
                       />
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Importance Rating
-                      </label>
-                      <RatingStars
-                        rating={section.rating}
-                        onRatingChange={(rating) =>
-                          handleChange("rating", rating)
-                        }
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Type
-                      </label>
-                      <select
-                        value={section.type}
-                        onChange={(e) =>
-                          handleChange(
-                            "type",
-                            e.target.value as "section" | "break",
-                          )
-                        }
-                        className="input-field"
-                      >
-                        <option value="section">Section</option>
-                        <option value="break">Break</option>
-                      </select>
-                    </div>
                   </div>
-
-                  {/* Advanced Fields Toggle */}
-                  <div className="border-t pt-4">
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvanced(!showAdvanced)}
-                      className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
-                    >
-                      {showAdvanced ? (
-                        <ChevronDown className="w-4 h-4" />
-                      ) : (
-                        <ChevronRight className="w-4 h-4" />
-                      )}
-                      Advanced Fields
-                    </button>
-                  </div>
-
-                  {showAdvanced && (
-                    <div className="space-y-4 border-t pt-4">
-                      {/* Sensors */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Sensors
-                        </label>
-                        <SensorSelector
-                          selectedSensors={section.sensors}
-                          onSensorsChange={(sensors) =>
-                            handleChange("sensors", sensors)
-                          }
-                        />
-                      </div>
-
-                      {/* Notes */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Notes
-                        </label>
-                        <textarea
-                          value={section.additionalNotes}
-                          onChange={(e) =>
-                            handleChange("additionalNotes", e.target.value)
-                          }
-                          className="input-field resize-none"
-                          rows={3}
-                          placeholder="Add notes or comments for this section..."
-                        />
-                      </div>
-                    </div>
-                  )}
 
                   {/* Subsections */}
-                  <div className="border-t pt-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="font-medium text-gray-900">Subsections</h4>
+                  <div className=" pt-4">
+                    <div className="flex  justify-left mb-4 gap-3">
                       <button
                         type="button"
                         onClick={handleAddSubsection}
                         className="btn-primary text-sm px-3 py-1 flex items-center gap-1"
                       >
                         <Plus className="w-4 h-4" />
-                        Add Subsection
+                        Subsection
                       </button>
+                      <button
+                        type="button"
+                        onClick={handleAddBreak}
+                        className="btn-primary amber text-sm px-3 py-1 flex items-center gap-1"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Break
+                      </button>
+                      <SensorSelector
+                        selectedSensors={section.sensors || []}
+                        onSensorsChange={(sensors) =>
+                          handleChange("sensors", sensors)
+                        }
+                      />
                     </div>
 
                     {section.subsections.length > 0 ? (
                       <Droppable
+                        key={`subsections-drop-${section.id}`}
                         droppableId={`subsections-${section.id}`}
                         type="subsection"
                       >
@@ -257,7 +245,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
                           <div
                             ref={provided.innerRef}
                             {...provided.droppableProps}
-                            className="space-y-3"
+                            className="space-y-2"
                           >
                             {section.subsections.map((subsection, subIndex) => (
                               <SubsectionCard
@@ -273,7 +261,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
                         )}
                       </Droppable>
                     ) : (
-                      <div className="text-center py-6 text-gray-500">
+                      <div className="text-center py-5 text-gray-500">
                         <p>
                           No subsections yet. Click "Add Subsection" to get
                           started.

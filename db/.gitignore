@@ -1,0 +1,35 @@
+# Environment files with sensitive data
+.env
+
+# Database data and logs
+data/
+logs/
+*.log
+
+# MySQL specific files
+mysql-bin.*
+*.pid
+*.sock
+*.err
+
+# Backup files
+*.sql.bak
+backup_*.sql
+dump_*.sql
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker volumes (if mounted locally)
+mysql-data/
+db-data/

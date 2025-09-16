@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Protocol, Section, Subsection } from "./types";
+import { Protocol } from "./types";
 import ProtocolEditor from "./components/ProtocolEditor";
 import ProtocolOverview from "./components/ProtocolOverview";
 import Login from "./components/Login";
 import Header from "./components/Header";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { AlertCircle, X } from "lucide-react";
-import {
-  protocolService,
-  clearOldProtocolData,
-} from "./services/protocolService";
+import { useProtocol } from "./hooks/useDataProvider";
+
 import "./index.css";
 
 const initialProtocol: Protocol = {
@@ -23,10 +21,6 @@ const initialProtocol: Protocol = {
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [enabledSections, setEnabledSections] = useState<Section[]>([]);
-  const [totalSections, setTotalSections] = useState<number>(0);
-  const [enabledTotalTime, setEnabledTotalTime] = useState<number>(0);
   const [validationAlert, setValidationAlert] = useState<{
     show: boolean;
     message: string;
@@ -40,126 +34,67 @@ const AppContent: React.FC = () => {
     message: "",
     missingItems: [],
   });
-  const [protocol, setProtocol] = useState<Protocol>(() => {
-    try {
-      const savedProtocol = protocolService.loadLocal();
-      if (savedProtocol && savedProtocol.data) {
-        // Validate that the saved data has required Protocol properties
-        if (
-          savedProtocol.data.id &&
-          savedProtocol.data.name &&
-          savedProtocol.data.sections
-        ) {
-          // Ensure sections and subsections have enabled property
-          const sectionsWithEnabled = savedProtocol.data.sections.map(
-            (section: any) => ({
-              ...section,
-              enabled: section.enabled !== undefined ? section.enabled : true,
-              subsections:
-                section.subsections?.map((sub: any) => ({
-                  ...sub,
-                  enabled: sub.enabled !== undefined ? sub.enabled : true,
-                })) || [],
-            }),
-          );
+  // Use a default protocol ID for now - in a real app this would come from routing
+  const protocolId = "protocol-1";
+  const {
+    protocol: loadedProtocol,
+    updateProtocol,
+    loading: protocolLoading,
+    error: protocolError,
+  } = useProtocol(protocolId);
 
-          return {
-            ...savedProtocol.data,
-            sections: sectionsWithEnabled,
-            createdAt: savedProtocol.data.createdAt
-              ? new Date(savedProtocol.data.createdAt)
-              : new Date(),
-            updatedAt: savedProtocol.data.updatedAt
-              ? new Date(savedProtocol.data.updatedAt)
-              : new Date(),
-          };
-        }
-      }
-    } catch (error) {
-      console.error("Error loading saved protocol, clearing old data:", error);
-      clearOldProtocolData();
-    }
-    return initialProtocol;
-  });
+  const [protocol, setProtocol] = useState<Protocol>(initialProtocol);
   const [hasError, setHasError] = useState(false);
 
+  // Update local state when protocol is loaded
   useEffect(() => {
-    if (isAuthenticated && !hasError) {
-      try {
-        const updatedProtocol = {
-          ...protocol,
-          updatedAt: new Date(),
-        };
-        protocolService.saveLocally(updatedProtocol);
-      } catch (error) {
-        console.error("Error saving protocol:", error);
-        setHasError(true);
-      }
+    if (loadedProtocol) {
+      // Ensure sections and subsections have enabled property for backward compatibility
+      const sectionsWithEnabled = loadedProtocol.sections.map(
+        (section: any) => ({
+          ...section,
+          enabled: section.enabled !== undefined ? section.enabled : true,
+          subsections:
+            section.subsections?.map((sub: any) => ({
+              ...sub,
+              enabled: sub.enabled !== undefined ? sub.enabled : true,
+            })) || [],
+        }),
+      );
+
+      setProtocol({
+        ...loadedProtocol,
+        sections: sectionsWithEnabled,
+        type: loadedProtocol.type || "in-lab",
+      });
     }
-  }, [protocol, isAuthenticated, hasError]);
+  }, [loadedProtocol]);
 
-  const handleExport = () => {
-    const dataStr = JSON.stringify(protocol, null, 2);
-    const dataUri =
-      "data:application/json;charset=utf-8," + encodeURIComponent(dataStr);
-
-    const exportFileDefaultName = `${protocol.name.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.json`;
-
-    const linkElement = document.createElement("a");
-    linkElement.setAttribute("href", dataUri);
-    linkElement.setAttribute("download", exportFileDefaultName);
-    linkElement.click();
-  };
-
-  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const importedProtocol = JSON.parse(e.target?.result as string);
-          handleProtocolChange(importedProtocol);
-        } catch (error) {
-          console.error("Error parsing JSON:", error);
-          alert("Error importing protocol. Please check the file format.");
-        }
-      };
-      reader.readAsText(file);
+  // Handle protocol loading error
+  useEffect(() => {
+    if (protocolError) {
+      setHasError(true);
     }
-    // Reset file input
-    event.target.value = "";
-  };
+  }, [protocolError]);
+
+  // Protocol is automatically saved via DataProvider, no need for manual saving
 
   const handleProtocolChange = (updatedProtocol: Protocol) => {
     try {
-      setProtocol({
+      const protocolWithUpdatedTime = {
         ...updatedProtocol,
         updatedAt: new Date(),
-      });
+      };
 
-      // Update sections stats
-      const enabled = updatedProtocol.sections.filter(
-        (section) => section.enabled,
-      );
-      setEnabledSections(enabled);
-      setTotalSections(updatedProtocol.sections.length);
+      setProtocol(protocolWithUpdatedTime);
 
-      // Calculate total time
-      const totalTime = enabled.reduce((sum, section) => {
-        const sectionTime =
-          section.time +
-          (section.subsections || [])
-            .filter((sub) => sub.enabled)
-            .reduce((subSum, sub) => {
-              if (sub.type === "break") {
-                return subSum + (sub as Subsection).time;
-              }
-              return subSum + (sub as Subsection).time;
-            }, 0);
-        return sum + sectionTime;
-      }, 0);
-
-      setEnabledTotalTime(totalTime);
+      // Save to DataProvider (convert to Partial<Protocol> for updateProtocol)
+      const partialUpdate: Partial<Protocol> = {
+        ...protocolWithUpdatedTime,
+        createdAt: protocolWithUpdatedTime.createdAt,
+        updatedAt: protocolWithUpdatedTime.updatedAt,
+      };
+      updateProtocol(partialUpdate);
       setHasError(false); // Reset error state on successful update
     } catch (error) {
       console.error("Error updating protocol:", error);
@@ -167,7 +102,7 @@ const AppContent: React.FC = () => {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || protocolLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -208,8 +143,11 @@ const AppContent: React.FC = () => {
           <div className="space-y-2">
             <button
               onClick={() => {
-                clearOldProtocolData();
                 setProtocol(initialProtocol);
+                const partialUpdate: Partial<Protocol> = {
+                  ...initialProtocol,
+                };
+                updateProtocol(partialUpdate);
                 setHasError(false);
               }}
               className="btn-primary w-full"
@@ -227,57 +165,6 @@ const AppContent: React.FC = () => {
       </div>
     );
   }
-
-  const handleCompleteProtocol = () => {
-    // Validate that all sections and subsections have importance ratings
-    const missingSections: {
-      type: "section" | "subsection";
-      id: string;
-      title: string;
-    }[] = [];
-
-    protocol.sections.forEach((section) => {
-      // Check if section has a rating
-      if (!section.rating || section.rating === 0) {
-        missingSections.push({
-          type: "section",
-          id: section.id,
-          title: section.title || "Untitled Section",
-        });
-      }
-
-      // Check subsections
-      if (section.subsections) {
-        section.subsections.forEach((sub) => {
-          if (sub.type === "subsection") {
-            const subsection = sub as Subsection;
-            if (!subsection.rating || subsection.rating === 0) {
-              missingSections.push({
-                type: "subsection",
-                id: subsection.id,
-                title: subsection.title || "Untitled Subsection",
-              });
-            }
-          }
-        });
-      }
-    });
-
-    if (missingSections.length > 0) {
-      setValidationAlert({
-        show: true,
-        message:
-          "Please provide importance ratings for all sections and subsections before completing the protocol.",
-        missingItems: missingSections,
-      });
-    } else {
-      // Success! All items have ratings
-      alert(
-        "Protocol complete! All sections and subsections have importance ratings.",
-      );
-      // Here you would typically save or submit the protocol
-    }
-  };
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">

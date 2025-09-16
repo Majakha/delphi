@@ -2,6 +2,7 @@ import {
   Protocol,
   Sensor,
   Section,
+  SharedSection,
   User,
   SyncQueueItem,
   StoredProtocol,
@@ -12,10 +13,10 @@ import {
   CreateSensorData,
   CreateSectionData,
   RequestOptions,
-} from './types';
-import { AuthManager } from './AuthManager';
-import { CacheManager } from './CacheManager';
-import { StorageManager } from './StorageManager';
+} from "./types";
+import { AuthManager } from "./AuthManager";
+import { CacheManager } from "./CacheManager";
+import { StorageManager } from "./StorageManager";
 
 export class DataProvider {
   private baseUrl: string;
@@ -28,7 +29,7 @@ export class DataProvider {
   private syncTimeout: NodeJS.Timeout | null = null;
   private periodicSyncInterval: NodeJS.Timeout | null = null;
 
-  constructor(baseUrl: string = '/api') {
+  constructor(baseUrl: string = "/api") {
     this.baseUrl = baseUrl;
     this.storageManager = new StorageManager();
     this.authManager = new AuthManager(this.storageManager);
@@ -52,11 +53,11 @@ export class DataProvider {
    * Notify all listeners of an event
    */
   private notify(type: NotificationType, data?: any): void {
-    this.listeners.forEach(callback => {
+    this.listeners.forEach((callback) => {
       try {
         callback(type, data);
       } catch (error) {
-        console.error('Listener error:', error);
+        console.error("Listener error:", error);
       }
     });
   }
@@ -64,16 +65,16 @@ export class DataProvider {
   // ===== INITIALIZATION =====
 
   private initializeEventListeners(): void {
-    window.addEventListener('online', () => {
+    window.addEventListener("online", () => {
       this.isOnline = true;
       this.syncPendingChanges();
     });
 
-    window.addEventListener('offline', () => {
+    window.addEventListener("offline", () => {
       this.isOnline = false;
     });
 
-    window.addEventListener('beforeunload', () => {
+    window.addEventListener("beforeunload", () => {
       if (this.syncQueue.length > 0) {
         this.syncPendingChanges();
       }
@@ -93,13 +94,16 @@ export class DataProvider {
   /**
    * Generic API request handler with authentication
    */
-  private async apiRequest<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  private async apiRequest<T = any>(
+    endpoint: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
     // Ensure we have a valid token
     await this.authManager.ensureValidToken(this.baseUrl);
 
     const url = `${this.baseUrl}${endpoint}`;
     const headers = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...this.authManager.getAuthHeaders(),
       ...options.headers,
     };
@@ -116,22 +120,27 @@ export class DataProvider {
       // Handle authentication errors
       if (response.status === 401) {
         await this.authManager.handleUnauthorized(this.baseUrl);
-        throw new Error('Authentication required');
+        throw new Error("Authentication required");
       }
 
       if (response.status === 403) {
-        this.notify('auth_error', { message: 'Access forbidden' });
-        throw new Error('Access forbidden');
+        this.notify("auth_error", { message: "Access forbidden" });
+        throw new Error("Access forbidden");
       }
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`API Error: ${response.status} ${errorText || response.statusText}`);
+        throw new Error(
+          `API Error: ${response.status} ${errorText || response.statusText}`,
+        );
       }
 
       return await response.json();
     } catch (error) {
-      this.notify('api_error', { endpoint, error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("api_error", {
+        endpoint,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
@@ -140,12 +149,14 @@ export class DataProvider {
 
   async login(email: string, password: string): Promise<User> {
     try {
-      this.notify('logging_in');
+      this.notify("logging_in");
       const user = await this.authManager.login(this.baseUrl, email, password);
-      this.notify('logged_in', { user });
+      this.notify("logged_in", { user });
       return user;
     } catch (error) {
-      this.notify('auth_error', { error: error instanceof Error ? error.message : 'Login failed' });
+      this.notify("auth_error", {
+        error: error instanceof Error ? error.message : "Login failed",
+      });
       throw error;
     }
   }
@@ -155,9 +166,11 @@ export class DataProvider {
       await this.authManager.logout(this.baseUrl);
       this.cacheManager.clear();
       this.syncQueue = [];
-      this.notify('logged_out');
+      this.notify("logged_out");
     } catch (error) {
-      this.notify('auth_error', { error: error instanceof Error ? error.message : 'Logout failed' });
+      this.notify("auth_error", {
+        error: error instanceof Error ? error.message : "Logout failed",
+      });
       throw error;
     }
   }
@@ -174,15 +187,17 @@ export class DataProvider {
 
   async loadProtocol(id: string): Promise<StoredProtocol> {
     try {
-      this.notify('loading', { type: 'protocol', id });
+      this.notify("loading", { type: "protocol", id });
 
       // Try local storage first
-      const localProtocol = this.storageManager.get<StoredProtocol>(`protocol_${id}`);
+      const localProtocol = this.storageManager.get<StoredProtocol>(
+        `protocol_${id}`,
+      );
 
       if (localProtocol && this.isOnline) {
         // Use local data immediately but check server for updates
         this.apiRequest<Protocol>(`/protocols/${id}`)
-          .then(serverProtocol => {
+          .then((serverProtocol) => {
             const serverTimestamp = new Date(serverProtocol.updatedAt);
             const localTimestamp = new Date(localProtocol.lastModified);
 
@@ -190,14 +205,16 @@ export class DataProvider {
               const updatedProtocol: StoredProtocol = {
                 ...serverProtocol,
                 lastModified: new Date().toISOString(),
-                syncStatus: 'synced',
+                syncStatus: "synced",
               };
               this.storageManager.set(`protocol_${id}`, updatedProtocol);
-              this.notify('protocol_updated', updatedProtocol);
+              this.notify("protocol_updated", updatedProtocol);
             }
           })
           .catch(() => {
-            this.notify('sync_warning', { message: 'Could not check for updates' });
+            this.notify("sync_warning", {
+              message: "Could not check for updates",
+            });
           });
 
         return localProtocol;
@@ -209,16 +226,19 @@ export class DataProvider {
         const storedProtocol: StoredProtocol = {
           ...protocol,
           lastModified: new Date().toISOString(),
-          syncStatus: 'synced',
+          syncStatus: "synced",
         };
         this.storageManager.set(`protocol_${id}`, storedProtocol);
-        this.notify('loaded', { type: 'protocol', id });
+        this.notify("loaded", { type: "protocol", id });
         return storedProtocol;
       }
 
-      throw new Error('Protocol not available offline');
+      throw new Error("Protocol not available offline");
     } catch (error) {
-      this.notify('error', { type: 'protocol_load', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "protocol_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
@@ -230,31 +250,31 @@ export class DataProvider {
     const localProtocol: StoredProtocol = {
       ...protocol,
       lastModified: timestamp,
-      syncStatus: 'pending',
+      syncStatus: "pending",
     };
 
     this.storageManager.set(`protocol_${protocol.id}`, localProtocol);
 
     // Add to sync queue if online
     if (this.isOnline) {
-      this.addToSyncQueue('protocol', protocol.id, protocol, timestamp);
+      this.addToSyncQueue("protocol", protocol.id, protocol, timestamp);
       this.debouncedSync();
     }
 
-    this.notify('saved_locally', { type: 'protocol', id: protocol.id });
+    this.notify("saved_locally", { type: "protocol", id: protocol.id });
     return localProtocol;
   }
 
   async createProtocol(protocolData: CreateProtocolData): Promise<Protocol> {
     try {
-      this.notify('creating', { type: 'protocol' });
+      this.notify("creating", { type: "protocol" });
 
       if (!this.isOnline) {
-        throw new Error('Cannot create new protocol while offline');
+        throw new Error("Cannot create new protocol while offline");
       }
 
-      const protocol = await this.apiRequest<Protocol>('/protocols', {
-        method: 'POST',
+      const protocol = await this.apiRequest<Protocol>("/protocols", {
+        method: "POST",
         body: protocolData,
       });
 
@@ -262,30 +282,36 @@ export class DataProvider {
       const storedProtocol: StoredProtocol = {
         ...protocol,
         lastModified: new Date().toISOString(),
-        syncStatus: 'synced',
+        syncStatus: "synced",
       };
       this.storageManager.set(`protocol_${protocol.id}`, storedProtocol);
 
-      this.notify('created', { type: 'protocol', id: protocol.id });
+      this.notify("created", { type: "protocol", id: protocol.id });
       return protocol;
     } catch (error) {
-      this.notify('error', { type: 'protocol_create', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "protocol_create",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
 
   async deleteProtocol(id: string): Promise<void> {
     try {
-      this.notify('deleting', { type: 'protocol', id });
+      this.notify("deleting", { type: "protocol", id });
 
       if (this.isOnline) {
-        await this.apiRequest(`/protocols/${id}`, { method: 'DELETE' });
+        await this.apiRequest(`/protocols/${id}`, { method: "DELETE" });
       }
 
       this.storageManager.remove(`protocol_${id}`);
-      this.notify('deleted', { type: 'protocol', id });
+      this.notify("deleted", { type: "protocol", id });
     } catch (error) {
-      this.notify('error', { type: 'protocol_delete', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "protocol_delete",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
@@ -293,7 +319,7 @@ export class DataProvider {
   // ===== SHARED CONTENT OPERATIONS =====
 
   async getSensors(forceRefresh: boolean = false): Promise<Sensor[]> {
-    const cacheKey = 'sensors';
+    const cacheKey = "sensors";
     const cached = this.cacheManager.get<Sensor[]>(cacheKey);
 
     if (!forceRefresh && cached) {
@@ -301,104 +327,123 @@ export class DataProvider {
     }
 
     try {
-      this.notify('loading', { type: 'sensors' });
+      this.notify("loading", { type: "sensors" });
 
-      const sensors = await this.apiRequest<Sensor[]>('/sensors');
+      const sensors = await this.apiRequest<Sensor[]>("/sensors");
       this.cacheManager.set(cacheKey, sensors);
 
-      this.notify('loaded', { type: 'sensors', count: sensors.length });
+      this.notify("loaded", { type: "sensors", count: sensors.length });
       return sensors;
     } catch (error) {
       if (cached) {
-        this.notify('using_cached', { type: 'sensors' });
+        this.notify("using_cached", { type: "sensors" });
         return cached;
       }
 
-      this.notify('error', { type: 'sensors_load', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "sensors_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
 
-  async getSections(forceRefresh: boolean = false): Promise<Section[]> {
-    const cacheKey = 'sections';
-    const cached = this.cacheManager.get<Section[]>(cacheKey);
+  async getSections(forceRefresh: boolean = false): Promise<SharedSection[]> {
+    const cacheKey = "sections";
+    const cached = this.cacheManager.get<SharedSection[]>(cacheKey);
 
     if (!forceRefresh && cached) {
       return cached;
     }
 
     try {
-      this.notify('loading', { type: 'sections' });
+      this.notify("loading", { type: "sections" });
 
-      const sections = await this.apiRequest<Section[]>('/sections');
+      const sections = await this.apiRequest<SharedSection[]>("/sections");
       this.cacheManager.set(cacheKey, sections);
 
-      this.notify('loaded', { type: 'sections', count: sections.length });
+      this.notify("loaded", { type: "sections", count: sections.length });
       return sections;
     } catch (error) {
       if (cached) {
-        this.notify('using_cached', { type: 'sections' });
+        this.notify("using_cached", { type: "sections" });
         return cached;
       }
 
-      this.notify('error', { type: 'sections_load', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "sections_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
 
   async createSensor(sensorData: CreateSensorData): Promise<Sensor> {
     try {
-      this.notify('creating', { type: 'sensor' });
+      this.notify("creating", { type: "sensor" });
 
-      const sensor = await this.apiRequest<Sensor>('/sensors', {
-        method: 'POST',
+      const sensor = await this.apiRequest<Sensor>("/sensors", {
+        method: "POST",
         body: sensorData,
       });
 
       // Update cache with new sensor
-      const cached = this.cacheManager.get<Sensor[]>('sensors');
+      const cached = this.cacheManager.get<Sensor[]>("sensors");
       if (cached) {
         cached.push(sensor);
-        this.cacheManager.set('sensors', cached);
+        this.cacheManager.set("sensors", cached);
       }
 
-      this.notify('created', { type: 'sensor', id: sensor.id });
+      this.notify("created", { type: "sensor", id: sensor.id });
       return sensor;
     } catch (error) {
-      this.notify('error', { type: 'sensor_create', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "sensor_create",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
 
-  async createSection(sectionData: CreateSectionData): Promise<Section> {
+  async createSection(sectionData: CreateSectionData): Promise<SharedSection> {
     try {
-      this.notify('creating', { type: 'section' });
+      this.notify("creating", { type: "section" });
 
-      const section = await this.apiRequest<Section>('/sections', {
-        method: 'POST',
+      const section = await this.apiRequest<SharedSection>("/sections", {
+        method: "POST",
         body: sectionData,
       });
 
       // Update cache with new section
-      const cached = this.cacheManager.get<Section[]>('sections');
+      const cached = this.cacheManager.get<SharedSection[]>("sections");
       if (cached) {
         cached.push(section);
-        this.cacheManager.set('sections', cached);
+        this.cacheManager.set("sections", cached);
       }
 
-      this.notify('created', { type: 'section', id: section.id });
+      this.notify("created", { type: "section", id: section.id });
       return section;
     } catch (error) {
-      this.notify('error', { type: 'section_create', error: error instanceof Error ? error.message : 'Unknown error' });
+      this.notify("error", {
+        type: "section_create",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       throw error;
     }
   }
 
   // ===== SYNC MANAGEMENT =====
 
-  private addToSyncQueue(type: SyncQueueItem['type'], id: string, data: any, timestamp: string): void {
+  private addToSyncQueue(
+    type: SyncQueueItem["type"],
+    id: string,
+    data: any,
+    timestamp: string,
+  ): void {
     // Remove existing entry for this item
-    this.syncQueue = this.syncQueue.filter(item => !(item.type === type && item.id === id));
+    this.syncQueue = this.syncQueue.filter(
+      (item) => !(item.type === type && item.id === id),
+    );
 
     // Add new entry
     this.syncQueue.push({
@@ -424,20 +469,22 @@ export class DataProvider {
       return;
     }
 
-    this.notify('syncing', { count: this.syncQueue.length });
+    this.notify("syncing", { count: this.syncQueue.length });
 
     const syncPromises = this.syncQueue.map(async (item) => {
       try {
-        if (item.type === 'protocol') {
+        if (item.type === "protocol") {
           await this.apiRequest(`/protocols/${item.id}`, {
-            method: 'PUT',
+            method: "PUT",
             body: item.data,
           });
 
           // Update local storage to mark as synced
-          const localProtocol = this.storageManager.get<StoredProtocol>(`protocol_${item.id}`);
+          const localProtocol = this.storageManager.get<StoredProtocol>(
+            `protocol_${item.id}`,
+          );
           if (localProtocol) {
-            localProtocol.syncStatus = 'synced';
+            localProtocol.syncStatus = "synced";
             localProtocol.lastSyncedAt = new Date().toISOString();
             this.storageManager.set(`protocol_${item.id}`, localProtocol);
           }
@@ -448,7 +495,7 @@ export class DataProvider {
         return {
           success: false,
           id: item.id,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : "Unknown error",
           attempts: item.attempts,
         };
       }
@@ -456,37 +503,47 @@ export class DataProvider {
 
     const results = await Promise.allSettled(syncPromises);
     const successful = results
-      .filter((r): r is PromiseFulfilledResult<{ success: true; id: string }> =>
-        r.status === 'fulfilled' && r.value.success
+      .filter(
+        (r): r is PromiseFulfilledResult<{ success: true; id: string }> =>
+          r.status === "fulfilled" && r.value.success,
       )
-      .map(r => r.value);
+      .map((r) => r.value);
 
     const failed = results
-      .filter((r): r is PromiseFulfilledResult<{ success: false; id: string; error: string; attempts: number }> =>
-        r.status === 'fulfilled' && !r.value.success
+      .filter(
+        (
+          r,
+        ): r is PromiseFulfilledResult<{
+          success: false;
+          id: string;
+          error: string;
+          attempts: number;
+        }> => r.status === "fulfilled" && !r.value.success,
       )
-      .map(r => r.value);
+      .map((r) => r.value);
 
     // Remove successfully synced items from queue
-    this.syncQueue = this.syncQueue.filter(item =>
-      !successful.some(s => s.id === item.id)
+    this.syncQueue = this.syncQueue.filter(
+      (item) => !successful.some((s) => s.id === item.id),
     );
 
     // Remove items that have failed too many times (max 3 attempts)
-    this.syncQueue = this.syncQueue.filter(item => (item.attempts || 0) < 3);
+    this.syncQueue = this.syncQueue.filter((item) => (item.attempts || 0) < 3);
 
     if (successful.length > 0) {
-      this.notify('synced', { count: successful.length });
+      this.notify("synced", { count: successful.length });
     }
 
     if (failed.length > 0) {
-      this.notify('sync_failed', { count: failed.length });
+      this.notify("sync_failed", { count: failed.length });
     }
   }
 
   // ===== UTILITY METHODS =====
 
-  getCacheInfo(key: string): { timestamp: string; age: number; size: number } | null {
+  getCacheInfo(
+    key: string,
+  ): { timestamp: string; age: number; size: number } | null {
     return this.cacheManager.getInfo(key);
   }
 
@@ -496,7 +553,7 @@ export class DataProvider {
     } else {
       this.cacheManager.clear();
     }
-    this.notify('cache_cleared', { key });
+    this.notify("cache_cleared", { key });
   }
 
   getStatus(): DataProviderStatus {

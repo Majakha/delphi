@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { dataProvider } from '../services/DataProvider';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { dataProvider } from "../services/DataProvider";
 import {
   Protocol,
   StoredProtocol,
@@ -11,8 +11,9 @@ import {
   CreateSensorData,
   CreateSectionData,
   DataProviderStatus,
-  Notification
-} from '../services/types';
+  Notification,
+  SharedSection,
+} from "../services/types";
 
 /**
  * Hook for managing protocol data with automatic syncing
@@ -21,7 +22,9 @@ export const useProtocol = (protocolId: string) => {
   const [protocol, setProtocol] = useState<StoredProtocol | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'error'>('synced');
+  const [syncStatus, setSyncStatus] = useState<"synced" | "pending" | "error">(
+    "synced",
+  );
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
   // Load protocol on mount
@@ -36,7 +39,9 @@ export const useProtocol = (protocolId: string) => {
         setProtocol(protocolData);
         setSyncStatus(protocolData.syncStatus);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load protocol');
+        setError(
+          err instanceof Error ? err.message : "Failed to load protocol",
+        );
       } finally {
         setLoading(false);
       }
@@ -47,27 +52,29 @@ export const useProtocol = (protocolId: string) => {
 
   // Listen for data provider notifications
   useEffect(() => {
-    const unsubscribe = dataProvider.subscribe((type: NotificationType, data: any) => {
-      switch (type) {
-        case 'saved_locally':
-          if (data.id === protocolId) {
-            setSyncStatus('pending');
-            setLastSaved(new Date());
-          }
-          break;
-        case 'synced':
-          setSyncStatus('synced');
-          break;
-        case 'sync_failed':
-          setSyncStatus('error');
-          break;
-        case 'protocol_updated':
-          if (data.id === protocolId) {
-            setProtocol(data);
-          }
-          break;
-      }
-    });
+    const unsubscribe = dataProvider.subscribe(
+      (type: NotificationType, data: any) => {
+        switch (type) {
+          case "saved_locally":
+            if (data.id === protocolId) {
+              setSyncStatus("pending");
+              setLastSaved(new Date());
+            }
+            break;
+          case "synced":
+            setSyncStatus("synced");
+            break;
+          case "sync_failed":
+            setSyncStatus("error");
+            break;
+          case "protocol_updated":
+            if (data.id === protocolId) {
+              setProtocol(data);
+            }
+            break;
+        }
+      },
+    );
 
     return unsubscribe;
   }, [protocolId]);
@@ -83,22 +90,24 @@ export const useProtocol = (protocolId: string) => {
       try {
         await dataProvider.saveProtocol(updatedProtocol);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to save protocol');
+        setError(
+          err instanceof Error ? err.message : "Failed to save protocol",
+        );
         // Revert optimistic update on error
         setProtocol(protocol);
       }
     },
-    [protocol]
+    [protocol],
   );
 
   // Force sync function
   const forceSync = useCallback(async () => {
     try {
-      setSyncStatus('pending');
+      setSyncStatus("pending");
       await dataProvider.syncPendingChanges();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sync failed');
-      setSyncStatus('error');
+      setError(err instanceof Error ? err.message : "Sync failed");
+      setSyncStatus("error");
     }
   }, []);
 
@@ -120,7 +129,11 @@ export const useSensors = () => {
   const [sensors, setSensors] = useState<Sensor[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cacheInfo, setCacheInfo] = useState<{ timestamp: string; age: number; size: number } | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<{
+    timestamp: string;
+    age: number;
+    size: number;
+  } | null>(null);
 
   // Load sensors function
   const loadSensors = useCallback(async (forceRefresh: boolean = false) => {
@@ -131,29 +144,34 @@ export const useSensors = () => {
       setSensors(sensorsData);
 
       // Update cache info
-      const info = dataProvider.getCacheInfo('sensors');
+      const info = dataProvider.getCacheInfo("sensors");
       setCacheInfo(info);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sensors');
+      setError(err instanceof Error ? err.message : "Failed to load sensors");
     } finally {
       setLoading(false);
     }
   }, []);
 
   // Create new sensor
-  const createSensor = useCallback(async (sensorData: CreateSensorData): Promise<Sensor> => {
-    try {
-      setLoading(true);
-      const newSensor = await dataProvider.createSensor(sensorData);
-      setSensors(prev => [...prev, newSensor]);
-      return newSensor;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create sensor');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const createSensor = useCallback(
+    async (sensorData: CreateSensorData): Promise<Sensor> => {
+      try {
+        setLoading(true);
+        const newSensor = await dataProvider.createSensor(sensorData);
+        setSensors((prev) => [...prev, newSensor]);
+        return newSensor;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create sensor",
+        );
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   // Refresh sensors
   const refreshSensors = useCallback(() => {
@@ -175,10 +193,14 @@ export const useSensors = () => {
  * Hook for managing sections data with on-demand fetching
  */
 export const useSections = () => {
-  const [sections, setSections] = useState<Section[]>([]);
+  const [sections, setSections] = useState<SharedSection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cacheInfo, setCacheInfo] = useState<{ timestamp: string; age: number; size: number } | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<{
+    timestamp: string;
+    age: number;
+    size: number;
+  } | null>(null);
 
   // Load sections function
   const loadSections = useCallback(async (forceRefresh: boolean = false) => {
@@ -189,29 +211,34 @@ export const useSections = () => {
       setSections(sectionsData);
 
       // Update cache info
-      const info = dataProvider.getCacheInfo('sections');
+      const info = dataProvider.getCacheInfo("sections");
       setCacheInfo(info);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sections');
+      setError(err instanceof Error ? err.message : "Failed to load sections");
     } finally {
       setLoading(false);
     }
   }, []);
 
   // Create new section
-  const createSection = useCallback(async (sectionData: CreateSectionData): Promise<Section> => {
-    try {
-      setLoading(true);
-      const newSection = await dataProvider.createSection(sectionData);
-      setSections(prev => [...prev, newSection]);
-      return newSection;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create section');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const createSection = useCallback(
+    async (sectionData: CreateSectionData): Promise<SharedSection> => {
+      try {
+        setLoading(true);
+        const newSection = await dataProvider.createSection(sectionData);
+        setSections((prev) => [...prev, newSection]);
+        return newSection;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create section",
+        );
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   // Refresh sections
   const refreshSections = useCallback(() => {
@@ -236,19 +263,24 @@ export const useProtocolCreation = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const createProtocol = useCallback(async (protocolData: CreateProtocolData): Promise<Protocol> => {
-    try {
-      setLoading(true);
-      setError(null);
-      const newProtocol = await dataProvider.createProtocol(protocolData);
-      return newProtocol;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create protocol');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const createProtocol = useCallback(
+    async (protocolData: CreateProtocolData): Promise<Protocol> => {
+      try {
+        setLoading(true);
+        setError(null);
+        const newProtocol = await dataProvider.createProtocol(protocolData);
+        return newProtocol;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create protocol",
+        );
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   return {
     createProtocol,
@@ -280,26 +312,30 @@ export const useDataProviderStatus = () => {
     const interval = setInterval(updateStatus, 5000);
 
     // Listen for notifications
-    const unsubscribe = dataProvider.subscribe((type: NotificationType, data: any) => {
-      const notification: Notification = {
-        id: ++notificationIdRef.current,
-        type,
-        data,
-        timestamp: new Date(),
-        read: false,
-      };
+    const unsubscribe = dataProvider.subscribe(
+      (type: NotificationType, data: any) => {
+        const notification: Notification = {
+          id: ++notificationIdRef.current,
+          type,
+          data,
+          timestamp: new Date(),
+          read: false,
+        };
 
-      setNotifications(prev => [notification, ...prev.slice(0, 9)]); // Keep last 10
+        setNotifications((prev) => [notification, ...prev.slice(0, 9)]); // Keep last 10
 
-      // Auto-remove non-error notifications after 5 seconds
-      if (!type.includes('error')) {
-        setTimeout(() => {
-          setNotifications(prev =>
-            prev.map(n => n.id === notification.id ? { ...n, read: true } : n)
-          );
-        }, 5000);
-      }
-    });
+        // Auto-remove non-error notifications after 5 seconds
+        if (!type.includes("error")) {
+          setTimeout(() => {
+            setNotifications((prev) =>
+              prev.map((n) =>
+                n.id === notification.id ? { ...n, read: true } : n,
+              ),
+            );
+          }, 5000);
+        }
+      },
+    );
 
     return () => {
       clearInterval(interval);
@@ -312,14 +348,14 @@ export const useDataProviderStatus = () => {
   }, []);
 
   const markAsRead = useCallback((notificationId: number) => {
-    setNotifications(prev =>
-      prev.map(n => n.id === notificationId ? { ...n, read: true } : n)
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n)),
     );
   }, []);
 
   return {
     status,
-    notifications: notifications.filter(n => !n.read),
+    notifications: notifications.filter((n) => !n.read),
     clearNotifications,
     markAsRead,
   };
@@ -351,7 +387,7 @@ export const useAuth = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(
-    dataProvider.isAuthenticated()
+    dataProvider.isAuthenticated(),
   );
 
   // Check authentication status on mount
@@ -363,45 +399,50 @@ export const useAuth = () => {
 
   // Listen for auth notifications
   useEffect(() => {
-    const unsubscribe = dataProvider.subscribe((type: NotificationType, data: any) => {
-      switch (type) {
-        case 'logged_in':
-          setUser(data.user);
-          setIsAuthenticated(true);
-          setError(null);
-          break;
-        case 'logged_out':
-        case 'session_expired':
-          setUser(null);
-          setIsAuthenticated(false);
-          break;
-        case 'auth_error':
-          setError(data.error);
-          break;
-        case 'token_refreshed':
-          const updatedUser = dataProvider.getCurrentUser();
-          setUser(updatedUser);
-          break;
-      }
-    });
+    const unsubscribe = dataProvider.subscribe(
+      (type: NotificationType, data: any) => {
+        switch (type) {
+          case "logged_in":
+            setUser(data.user);
+            setIsAuthenticated(true);
+            setError(null);
+            break;
+          case "logged_out":
+          case "session_expired":
+            setUser(null);
+            setIsAuthenticated(false);
+            break;
+          case "auth_error":
+            setError(data.error);
+            break;
+          case "token_refreshed":
+            const updatedUser = dataProvider.getCurrentUser();
+            setUser(updatedUser);
+            break;
+        }
+      },
+    );
 
     return unsubscribe;
   }, []);
 
   // Login function
-  const login = useCallback(async (email: string, password: string): Promise<User> => {
-    try {
-      setLoading(true);
-      setError(null);
-      const userData = await dataProvider.login(email, password);
-      return userData;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string): Promise<User> => {
+      try {
+        setLoading(true);
+        setError(null);
+        const userData = await dataProvider.login(email, password);
+        return userData;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Login failed");
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   // Logout function
   const logout = useCallback(async () => {
@@ -409,7 +450,7 @@ export const useAuth = () => {
       setLoading(true);
       await dataProvider.logout();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Logout failed');
+      setError(err instanceof Error ? err.message : "Logout failed");
     } finally {
       setLoading(false);
     }

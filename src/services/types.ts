@@ -21,20 +21,37 @@ export interface AuthResponse {
 export interface Protocol {
   id: string;
   name: string;
-  description: string;
-  sections: ProtocolSection[];
-  createdAt: string;
-  updatedAt: string;
-  userId: string;
+  type: "in-lab" | "real-world";
+  sections: Section[];
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface ProtocolSection {
+export interface Section {
   id: string;
   title: string;
+  time: number;
+  rating: number;
   description: string;
+  additionalNotes: string;
   sensors: string[];
-  order: number;
+  subsections: SubsectionItem[];
+  type: "section";
+  enabled: boolean;
 }
+
+export interface Subsection {
+  id: string;
+  title: string;
+  time: number;
+  rating?: number;
+  description: string;
+  additionalNotes: string;
+  enabled: boolean;
+  type: "subsection" | "break";
+}
+
+export type SubsectionItem = Subsection;
 
 export interface Sensor {
   id: string;
@@ -48,7 +65,7 @@ export interface Sensor {
   createdAt: string;
 }
 
-export interface Section {
+export interface SharedSection {
   id: string;
   title: string;
   description: string;
@@ -70,7 +87,7 @@ export interface CacheEntry<T = any> {
 }
 
 export interface SyncQueueItem {
-  type: 'protocol' | 'sensor' | 'section';
+  type: "protocol" | "sensor" | "section";
   id: string;
   data: any;
   timestamp: string;
@@ -94,40 +111,43 @@ export interface Notification {
 }
 
 export type NotificationType =
-  | 'loading'
-  | 'loaded'
-  | 'saving'
-  | 'saved_locally'
-  | 'synced'
-  | 'syncing'
-  | 'sync_failed'
-  | 'creating'
-  | 'created'
-  | 'deleting'
-  | 'deleted'
-  | 'logging_in'
-  | 'logged_in'
-  | 'logged_out'
-  | 'session_expired'
-  | 'token_refreshed'
-  | 'auth_error'
-  | 'api_error'
-  | 'storage_error'
-  | 'error'
-  | 'sync_warning'
-  | 'using_cached'
-  | 'cache_cleared'
-  | 'protocol_updated';
+  | "loading"
+  | "loaded"
+  | "saving"
+  | "saved_locally"
+  | "synced"
+  | "syncing"
+  | "sync_failed"
+  | "creating"
+  | "created"
+  | "deleting"
+  | "deleted"
+  | "logging_in"
+  | "logged_in"
+  | "logged_out"
+  | "session_expired"
+  | "token_refreshed"
+  | "auth_error"
+  | "api_error"
+  | "storage_error"
+  | "error"
+  | "sync_warning"
+  | "using_cached"
+  | "cache_cleared"
+  | "protocol_updated";
 
-export type DataProviderEventCallback = (type: NotificationType, data: any) => void;
+export type DataProviderEventCallback = (
+  type: NotificationType,
+  data: any,
+) => void;
 
 export interface StoredProtocol extends Protocol {
   lastModified: string;
-  syncStatus: 'pending' | 'synced' | 'error';
+  syncStatus: "pending" | "synced" | "error";
   lastSyncedAt?: string;
 }
 
-export interface RequestOptions extends Omit<RequestInit, 'body'> {
+export interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: any;
 }
 
@@ -140,12 +160,12 @@ export interface PaginatedResponse<T> {
 
 export interface CreateProtocolData {
   name: string;
-  description: string;
-  sections?: ProtocolSection[];
+  type: "in-lab" | "real-world";
+  sections?: Section[];
 }
 
 export interface UpdateProtocolData extends Partial<CreateProtocolData> {
-  sections?: ProtocolSection[];
+  sections?: Section[];
 }
 
 export interface CreateSensorData {

@@ -1,11 +1,12 @@
-import { CacheEntry } from './types';
+import { CacheEntry } from "./types";
 
 export class CacheManager {
   private cache: Map<string, CacheEntry> = new Map();
   private maxSize: number;
   private defaultTtl: number; // Time to live in milliseconds
 
-  constructor(maxSize: number = 100, defaultTtl: number = 30 * 60 * 1000) { // 30 minutes default
+  constructor(maxSize: number = 100, defaultTtl: number = 30 * 60 * 1000) {
+    // 30 minutes default
     this.maxSize = maxSize;
     this.defaultTtl = defaultTtl;
   }
@@ -21,7 +22,7 @@ export class CacheManager {
 
     const entry: CacheEntry<T> = {
       data,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     this.cache.set(key, entry);
@@ -89,7 +90,9 @@ export class CacheManager {
   /**
    * Get cache information for a specific key
    */
-  getInfo(key: string): { timestamp: string; age: number; size: number } | null {
+  getInfo(
+    key: string,
+  ): { timestamp: string; age: number; size: number } | null {
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -102,7 +105,7 @@ export class CacheManager {
     return {
       timestamp: entry.timestamp,
       age,
-      size
+      size,
     };
   }
 
@@ -156,7 +159,7 @@ export class CacheManager {
       keys,
       oldestEntry: oldestKey,
       newestEntry: newestKey,
-      totalEstimatedSize: totalSize
+      totalEstimatedSize: totalSize,
     };
   }
 
@@ -180,7 +183,7 @@ export class CacheManager {
   batchGet<T>(keys: string[]): Record<string, T | null> {
     const result: Record<string, T | null> = {};
 
-    keys.forEach(key => {
+    keys.forEach((key) => {
       result[key] = this.get<T>(key);
     });
 
@@ -202,12 +205,12 @@ export class CacheManager {
   cleanup(): number {
     let removedCount = 0;
 
-    for (const [key, entry] of this.cache.entries()) {
-      if (this.isExpired(entry)) {
+    this.cache.forEach((cacheEntry, key) => {
+      if (this.isExpired(cacheEntry)) {
         this.cache.delete(key);
         removedCount++;
       }
-    }
+    });
 
     return removedCount;
   }
@@ -231,13 +234,13 @@ export class CacheManager {
     let oldestKey: string | null = null;
     let oldestTime = Date.now();
 
-    for (const [key, entry] of this.cache.entries()) {
-      const time = new Date(entry.timestamp).getTime();
+    this.cache.forEach((cacheEntry, key) => {
+      const time = new Date(cacheEntry.timestamp).getTime();
       if (time < oldestTime) {
         oldestTime = time;
         oldestKey = key;
       }
-    }
+    });
 
     if (oldestKey) {
       this.cache.delete(oldestKey);

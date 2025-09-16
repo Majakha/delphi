@@ -1,0 +1,165 @@
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role?: string;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+}
+
+export interface AuthResponse {
+  user: User;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+}
+
+export interface Protocol {
+  id: string;
+  name: string;
+  description: string;
+  sections: ProtocolSection[];
+  createdAt: string;
+  updatedAt: string;
+  userId: string;
+}
+
+export interface ProtocolSection {
+  id: string;
+  title: string;
+  description: string;
+  sensors: string[];
+  order: number;
+}
+
+export interface Sensor {
+  id: string;
+  name: string;
+  description: string;
+  type: string;
+  category: string;
+  tags: string[];
+  isShared: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface Section {
+  id: string;
+  title: string;
+  description: string;
+  template: boolean;
+  isShared: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface ApiError {
+  message: string;
+  code?: string;
+  status?: number;
+}
+
+export interface CacheEntry<T = any> {
+  data: T;
+  timestamp: string;
+}
+
+export interface SyncQueueItem {
+  type: 'protocol' | 'sensor' | 'section';
+  id: string;
+  data: any;
+  timestamp: string;
+  attempts?: number;
+}
+
+export interface DataProviderStatus {
+  online: boolean;
+  authenticated: boolean;
+  pendingSync: number;
+  cacheKeys: string[];
+  tokenExpiry?: string;
+}
+
+export interface Notification {
+  id: number;
+  type: NotificationType;
+  data: any;
+  timestamp: Date;
+  read: boolean;
+}
+
+export type NotificationType =
+  | 'loading'
+  | 'loaded'
+  | 'saving'
+  | 'saved_locally'
+  | 'synced'
+  | 'syncing'
+  | 'sync_failed'
+  | 'creating'
+  | 'created'
+  | 'deleting'
+  | 'deleted'
+  | 'logging_in'
+  | 'logged_in'
+  | 'logged_out'
+  | 'session_expired'
+  | 'token_refreshed'
+  | 'auth_error'
+  | 'api_error'
+  | 'storage_error'
+  | 'error'
+  | 'sync_warning'
+  | 'using_cached'
+  | 'cache_cleared'
+  | 'protocol_updated';
+
+export type DataProviderEventCallback = (type: NotificationType, data: any) => void;
+
+export interface StoredProtocol extends Protocol {
+  lastModified: string;
+  syncStatus: 'pending' | 'synced' | 'error';
+  lastSyncedAt?: string;
+}
+
+export interface RequestOptions extends Omit<RequestInit, 'body'> {
+  body?: any;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CreateProtocolData {
+  name: string;
+  description: string;
+  sections?: ProtocolSection[];
+}
+
+export interface UpdateProtocolData extends Partial<CreateProtocolData> {
+  sections?: ProtocolSection[];
+}
+
+export interface CreateSensorData {
+  name: string;
+  description: string;
+  type: string;
+  category: string;
+  tags?: string[];
+  isShared?: boolean;
+}
+
+export interface CreateSectionData {
+  title: string;
+  description: string;
+  template?: boolean;
+  isShared?: boolean;
+}

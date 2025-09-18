@@ -1,8 +1,14 @@
 export interface Sensor {
   id: string;
   name: string;
+  description?: string;
+  type?: string;
   category?: string;
+  tags?: string[];
+  isShared?: boolean;
   isCustom?: boolean;
+  createdBy?: string;
+  createdAt?: string;
 }
 
 export interface Subsection {

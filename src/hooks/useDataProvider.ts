@@ -4,7 +4,6 @@ import {
   Protocol,
   StoredProtocol,
   Sensor,
-  Section,
   User,
   NotificationType,
   CreateProtocolData,
@@ -386,16 +385,39 @@ export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    dataProvider.isAuthenticated(),
-  );
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Check authentication status on mount
+  // Initialize authentication state
   useEffect(() => {
-    const currentUser = dataProvider.getCurrentUser();
-    setUser(currentUser);
-    setIsAuthenticated(dataProvider.isAuthenticated());
-  }, []);
+    const initAuth = () => {
+      const currentUser = dataProvider.getCurrentUser();
+      const authStatus = dataProvider.isAuthenticated();
+
+      setUser(currentUser);
+      setIsAuthenticated(authStatus);
+
+      // If we have a user but not authenticated (expired token), clear user
+      if (currentUser && !authStatus) {
+        setUser(null);
+        setIsAuthenticated(false);
+      }
+    };
+
+    initAuth();
+
+    // Check authentication status periodically
+    const interval = setInterval(() => {
+      const currentAuthStatus = dataProvider.isAuthenticated();
+      if (currentAuthStatus !== isAuthenticated) {
+        setIsAuthenticated(currentAuthStatus);
+        if (!currentAuthStatus) {
+          setUser(null);
+        }
+      }
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // Listen for auth notifications
   useEffect(() => {
@@ -408,16 +430,31 @@ export const useAuth = () => {
             setError(null);
             break;
           case "logged_out":
+            setUser(null);
+            setIsAuthenticated(false);
+            setError(null);
+            break;
           case "session_expired":
             setUser(null);
             setIsAuthenticated(false);
+            setError("Your session has expired. Please log in again.");
             break;
           case "auth_error":
             setError(data.error);
+            // If it's a critical auth error, clear auth state
+            if (
+              data.error?.includes("expired") ||
+              data.error?.includes("invalid")
+            ) {
+              setUser(null);
+              setIsAuthenticated(false);
+            }
             break;
           case "token_refreshed":
             const updatedUser = dataProvider.getCurrentUser();
             setUser(updatedUser);
+            setIsAuthenticated(true);
+            setError(null);
             break;
         }
       },
@@ -427,33 +464,45 @@ export const useAuth = () => {
   }, []);
 
   // Login function
-  const login = useCallback(
-    async (email: string, password: string): Promise<User> => {
-      try {
-        setLoading(true);
-        setError(null);
-        const userData = await dataProvider.login(email, password);
-        return userData;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Login failed");
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const login = useCallback(async (password: string): Promise<User> => {
+    try {
+      setLoading(true);
+      setError(null);
+      const userData = await dataProvider.login(password);
+      return userData;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Login failed";
+      setError(errorMessage);
+      setUser(null);
+      setIsAuthenticated(false);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Logout function
   const logout = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       await dataProvider.logout();
+      // State will be updated by the notification listener
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Logout failed");
+      // Even if logout fails on server, clear local state
+      setUser(null);
+      setIsAuthenticated(false);
+      const errorMessage = err instanceof Error ? err.message : "Logout failed";
+      console.warn("Logout error:", errorMessage);
+      // Don't set error state for logout failures since we cleared local state anyway
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Clear error function
+  const clearError = useCallback(() => {
+    setError(null);
   }, []);
 
   return {
@@ -463,5 +512,6 @@ export const useAuth = () => {
     error,
     login,
     logout,
+    clearError,
   };
 };

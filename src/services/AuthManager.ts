@@ -22,8 +22,17 @@ export class AuthManager {
     this.refreshTokenValue = this.storageManager.get<string>("refresh_token");
     this.tokenExpiry = this.storageManager.get<string>("token_expiry");
 
-    if (this.accessToken) {
-      this.user = this.decodeUserFromToken(this.accessToken);
+    // Only set user if we have a valid token that hasn't expired
+    if (this.accessToken && !this.isTokenExpired(0)) {
+      try {
+        this.user = this.decodeUserFromToken(this.accessToken);
+      } catch (error) {
+        // Token is invalid, clear all auth data
+        this.clearAuthTokens();
+      }
+    } else if (this.accessToken) {
+      // Token exists but is expired, clear auth data
+      this.clearAuthTokens();
     }
   }
 
@@ -119,16 +128,16 @@ export class AuthManager {
   }
 
   /**
-   * Authenticate with email and password
+   * Authenticate with password only
    */
-  async login(baseUrl: string, email: string, password: string): Promise<User> {
+  async login(baseUrl: string, password: string): Promise<User> {
     try {
       const response = await fetch(`${baseUrl}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ password }),
       });
 
       if (!response.ok) {
@@ -139,13 +148,12 @@ export class AuthManager {
       const authData: AuthResponse = await response.json();
 
       this.setAuthTokens({
-        access_token: authData.access_token,
-        refresh_token: authData.refresh_token,
-        expires_at: authData.expires_at,
+        access_token: authData.data.token,
+        refresh_token: "", // New API doesn't use refresh tokens yet
+        expires_at: authData.data.expiresAt,
       });
-
-      this.user = authData.user;
-      return authData.user;
+      this.user = authData.data.user;
+      return authData.data.user;
     } catch (error) {
       throw error instanceof Error ? error : new Error("Login failed");
     }
@@ -234,7 +242,7 @@ export class AuthManager {
    * Check if user is authenticated
    */
   isAuthenticated(): boolean {
-    return !!this.accessToken && !!this.user;
+    return !!this.accessToken && !!this.user && !this.isTokenExpired(0);
   }
 
   /**

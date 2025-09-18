@@ -1,8 +1,8 @@
 import {
   Protocol,
   Sensor,
-  Section,
   SharedSection,
+  SharedSubsection,
   User,
   SyncQueueItem,
   StoredProtocol,
@@ -12,6 +12,7 @@ import {
   CreateProtocolData,
   CreateSensorData,
   CreateSectionData,
+  CreateSubsectionData,
   RequestOptions,
 } from "./types";
 import { AuthManager } from "./AuthManager";
@@ -29,7 +30,17 @@ export class DataProvider {
   private syncTimeout: NodeJS.Timeout | null = null;
   private periodicSyncInterval: NodeJS.Timeout | null = null;
 
-  constructor(baseUrl: string = "/api") {
+  constructor(baseUrl?: string) {
+    // Determine the correct API base URL based on environment
+    if (!baseUrl) {
+      if (process.env.REACT_APP_API_BASE_URL) {
+        // Use explicit environment variable if set
+        baseUrl = process.env.REACT_APP_API_BASE_URL;
+      } else {
+        // Default to API container URL for Docker environment
+        baseUrl = "http://localhost:3001";
+      }
+    }
     this.baseUrl = baseUrl;
     this.storageManager = new StorageManager();
     this.authManager = new AuthManager(this.storageManager);
@@ -119,8 +130,18 @@ export class DataProvider {
 
       // Handle authentication errors
       if (response.status === 401) {
-        await this.authManager.handleUnauthorized(this.baseUrl);
-        throw new Error("Authentication required");
+        try {
+          await this.authManager.handleUnauthorized(this.baseUrl);
+          // Retry the request once after token refresh
+          const retryResponse = await fetch(url, requestOptions);
+          if (!retryResponse.ok) {
+            throw new Error("Authentication failed after token refresh");
+          }
+          return await retryResponse.json();
+        } catch (error) {
+          this.notify("session_expired");
+          throw new Error("Session expired - please log in again");
+        }
       }
 
       if (response.status === 403) {
@@ -129,10 +150,20 @@ export class DataProvider {
       }
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `API Error: ${response.status} ${errorText || response.statusText}`,
-        );
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { message: await response.text() };
+        }
+
+        // Handle structured error responses from new API format
+        const errorMessage =
+          errorData?.error?.message ||
+          errorData?.message ||
+          `API Error: ${response.status} ${response.statusText}`;
+
+        throw new Error(errorMessage);
       }
 
       return await response.json();
@@ -147,17 +178,33 @@ export class DataProvider {
 
   // ===== AUTHENTICATION =====
 
-  async login(email: string, password: string): Promise<User> {
+  async login(password: string): Promise<User> {
     try {
       this.notify("logging_in");
-      const user = await this.authManager.login(this.baseUrl, email, password);
+      const user = await this.authManager.login(this.baseUrl, password);
       this.notify("logged_in", { user });
       return user;
     } catch (error) {
-      this.notify("auth_error", {
-        error: error instanceof Error ? error.message : "Login failed",
-      });
-      throw error;
+      // Parse structured error response
+      let errorMessage = "Login failed";
+      if (error instanceof Error) {
+        try {
+          // Try to parse JSON error from API response
+          const match = error.message.match(/API Error: \d+ (.+)/);
+          if (match) {
+            const errorData = JSON.parse(match[1]);
+            errorMessage =
+              errorData?.error?.message || errorData?.message || error.message;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+
+      this.notify("auth_error", { error: errorMessage });
+      throw new Error(errorMessage);
     }
   }
 
@@ -168,15 +215,22 @@ export class DataProvider {
       this.syncQueue = [];
       this.notify("logged_out");
     } catch (error) {
-      this.notify("auth_error", {
-        error: error instanceof Error ? error.message : "Logout failed",
-      });
-      throw error;
+      // Even if logout API call fails, we still want to clear local state
+      this.cacheManager.clear();
+      this.syncQueue = [];
+      this.notify("logged_out");
+
+      console.warn("Logout API call failed, but local state cleared:", error);
     }
   }
 
   isAuthenticated(): boolean {
-    return this.authManager.isAuthenticated();
+    const isAuth = this.authManager.isAuthenticated();
+    // If auth manager thinks we're not authenticated but we haven't notified yet
+    if (!isAuth && this.getCurrentUser()) {
+      this.notify("session_expired");
+    }
+    return isAuth;
   }
 
   getCurrentUser(): User | null {
@@ -329,7 +383,12 @@ export class DataProvider {
     try {
       this.notify("loading", { type: "sensors" });
 
-      const sensors = await this.apiRequest<Sensor[]>("/sensors");
+      const response = await this.apiRequest<{
+        data: Sensor[];
+        success: boolean;
+        message: string;
+      }>("/sensors");
+      const sensors = response.data;
       this.cacheManager.set(cacheKey, sensors);
 
       this.notify("loaded", { type: "sensors", count: sensors.length });
@@ -359,7 +418,12 @@ export class DataProvider {
     try {
       this.notify("loading", { type: "sections" });
 
-      const sections = await this.apiRequest<SharedSection[]>("/sections");
+      const response = await this.apiRequest<{
+        data: SharedSection[];
+        success: boolean;
+        message: string;
+      }>("/sections");
+      const sections = response.data;
       this.cacheManager.set(cacheKey, sections);
 
       this.notify("loaded", { type: "sections", count: sections.length });
@@ -378,14 +442,56 @@ export class DataProvider {
     }
   }
 
+  async getSubsections(
+    forceRefresh: boolean = false,
+  ): Promise<SharedSubsection[]> {
+    const cacheKey = "subsections";
+    const cached = this.cacheManager.get<SharedSubsection[]>(cacheKey);
+
+    if (!forceRefresh && cached) {
+      return cached;
+    }
+
+    try {
+      this.notify("loading", { type: "subsections" });
+
+      const response = await this.apiRequest<{
+        data: SharedSubsection[];
+        success: boolean;
+        message: string;
+      }>("/subsections");
+      const subsections = response.data;
+      this.cacheManager.set(cacheKey, subsections);
+
+      this.notify("loaded", { type: "subsections", count: subsections.length });
+      return subsections;
+    } catch (error) {
+      if (cached) {
+        this.notify("using_cached", { type: "subsections" });
+        return cached;
+      }
+
+      this.notify("error", {
+        type: "subsections_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
   async createSensor(sensorData: CreateSensorData): Promise<Sensor> {
     try {
       this.notify("creating", { type: "sensor" });
 
-      const sensor = await this.apiRequest<Sensor>("/sensors", {
+      const response = await this.apiRequest<{
+        data: Sensor;
+        success: boolean;
+        message: string;
+      }>("/sensors", {
         method: "POST",
         body: sensorData,
       });
+      const sensor = response.data;
 
       // Update cache with new sensor
       const cached = this.cacheManager.get<Sensor[]>("sensors");
@@ -409,16 +515,20 @@ export class DataProvider {
     try {
       this.notify("creating", { type: "section" });
 
-      const section = await this.apiRequest<SharedSection>("/sections", {
+      const response = await this.apiRequest<{
+        data: SharedSection;
+        success: boolean;
+        message: string;
+      }>("/sections", {
         method: "POST",
         body: sectionData,
       });
+      const section = response.data;
 
       // Update cache with new section
       const cached = this.cacheManager.get<SharedSection[]>("sections");
       if (cached) {
-        cached.push(section);
-        this.cacheManager.set("sections", cached);
+        this.cacheManager.set("sections", [...cached, section]);
       }
 
       this.notify("created", { type: "section", id: section.id });
@@ -426,6 +536,39 @@ export class DataProvider {
     } catch (error) {
       this.notify("error", {
         type: "section_create",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  async createSubsection(
+    subsectionData: CreateSubsectionData,
+  ): Promise<SharedSubsection> {
+    try {
+      this.notify("creating", { type: "subsection" });
+
+      const response = await this.apiRequest<{
+        data: SharedSubsection;
+        success: boolean;
+        message: string;
+      }>("/subsections", {
+        method: "POST",
+        body: subsectionData,
+      });
+      const subsection = response.data;
+
+      // Update cache with new subsection
+      const cached = this.cacheManager.get<SharedSubsection[]>("subsections");
+      if (cached) {
+        this.cacheManager.set("subsections", [...cached, subsection]);
+      }
+
+      this.notify("created", { type: "subsection", id: subsection.id });
+      return subsection;
+    } catch (error) {
+      this.notify("error", {
+        type: "subsection_create",
         error: error instanceof Error ? error.message : "Unknown error",
       });
       throw error;

@@ -1,6 +1,6 @@
 export interface User {
   id: string;
-  email: string;
+  email?: string;
   name: string;
   role?: string;
 }
@@ -12,10 +12,14 @@ export interface AuthTokens {
 }
 
 export interface AuthResponse {
-  user: User;
-  access_token: string;
-  refresh_token: string;
-  expires_at: string;
+  success: boolean;
+  message: string;
+  timestamp: string;
+  data: {
+    token: string;
+    user: User;
+    expiresAt: string;
+  };
 }
 
 export interface Protocol {
@@ -73,6 +77,23 @@ export interface SharedSection {
   isShared: boolean;
   createdBy: string;
   createdAt: string;
+}
+
+export interface SharedSubsection {
+  id: string;
+  title: string;
+  time: number;
+  rating?: number;
+  description: string;
+  additional_notes: string;
+  enabled: boolean;
+  type: "subsection" | "break";
+  created_by: number;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
+  // Template data for creating new subsections
+  templateData?: Omit<Subsection, "id">;
 }
 
 export interface ApiError {
@@ -182,4 +203,14 @@ export interface CreateSectionData {
   description: string;
   template?: boolean;
   isShared?: boolean;
+}
+
+export interface CreateSubsectionData {
+  title: string;
+  time: number;
+  rating?: number;
+  description: string;
+  additionalNotes?: string;
+  type?: "subsection" | "break";
+  isPublic?: boolean;
 }

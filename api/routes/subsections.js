@@ -1,6 +1,12 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { executeAuthQuery, executeAuthQueryOne, executeAuthInsert, executeAuthUpdate, requireAuth } = require('../authDB.js');
+const {
+  executeAuthQuery,
+  executeAuthQueryOne,
+  executeAuthInsert,
+  executeAuthUpdate,
+  requireAuth,
+} = require("../authDB.js");
 const {
   getAllSubsections,
   getSubsectionById,
@@ -16,116 +22,151 @@ const {
   addSensorToSubsection,
   removeSensorFromSubsection,
   removeAllSensorsFromSubsection,
-  getSubsectionWithSensors
-} = require('../queries.js');
-const { v4: uuidv4 } = require('uuid');
+  getSubsectionWithSensors,
+} = require("../queries.js");
+const { v4: uuidv4 } = require("uuid");
+const { asyncHandler } = require("../middleware/errorHandler.js");
+const {
+  ValidationError,
+  NotFoundError,
+  DatabaseError,
+} = require("../errors/CustomErrors.js");
 
 // Get all subsections
-router.get('/', requireAuth, async (req, res) => {
-  try {
+router.get(
+  "/",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const query = getAllSubsections();
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error fetching subsections:', error);
-    res.status(500).json({ error: 'Failed to fetch subsections' });
-  }
-});
+    res.list(subsections, "Subsections retrieved successfully");
+  }),
+);
 
 // Get public subsections
-router.get('/public', requireAuth, async (req, res) => {
-  try {
+router.get(
+  "/public",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const query = getPublicSubsections();
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error fetching public subsections:', error);
-    res.status(500).json({ error: 'Failed to fetch public subsections' });
-  }
-});
+    res.list(subsections, "Public subsections retrieved successfully");
+  }),
+);
 
 // Get enabled subsections
-router.get('/enabled', requireAuth, async (req, res) => {
-  try {
+router.get(
+  "/enabled",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const query = getEnabledSubsections();
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error fetching enabled subsections:', error);
-    res.status(500).json({ error: 'Failed to fetch enabled subsections' });
-  }
-});
+    res.list(subsections, "Enabled subsections retrieved successfully");
+  }),
+);
 
 // Get subsections by type
-router.get('/type/:type', requireAuth, async (req, res) => {
-  try {
+router.get(
+  "/type/:type",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const { type } = req.params;
 
-    if (!['subsection', 'break'].includes(type)) {
-      return res.status(400).json({ error: 'Type must be either "subsection" or "break"' });
+    if (!["subsection", "break"].includes(type)) {
+      throw new ValidationError('Type must be either "subsection" or "break"', {
+        field: "type",
+        value: type,
+        allowedValues: ["subsection", "break"],
+      });
     }
 
     const query = getSubsectionsByType(type);
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error fetching subsections by type:', error);
-    res.status(500).json({ error: 'Failed to fetch subsections by type' });
-  }
-});
+    res.list(
+      subsections,
+      `Subsections of type '${type}' retrieved successfully`,
+    );
+  }),
+);
 
 // Get user's subsections
-router.get('/my', requireAuth, async (req, res) => {
-  try {
-    const { getUserContext } = require('../authDB.js');
+router.get(
+  "/my",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { getUserContext } = require("../authDB.js");
     const userContext = getUserContext(req.token);
 
     const query = getSubsectionsByUser(userContext.userId);
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error fetching user subsections:', error);
-    res.status(500).json({ error: 'Failed to fetch user subsections' });
-  }
-});
+    res.list(subsections, "User subsections retrieved successfully");
+  }),
+);
 
 // Search subsections
-router.get('/search/:term', requireAuth, async (req, res) => {
-  try {
-    const query = searchSubsections(req.params.term);
+router.get(
+  "/search/:term",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { term } = req.params;
+
+    if (!term.trim()) {
+      throw new ValidationError("Search term is required");
+    }
+
+    if (term.length < 2) {
+      throw new ValidationError(
+        "Search term must be at least 2 characters long",
+      );
+    }
+
+    const query = searchSubsections(term);
     const subsections = await executeAuthQuery(query, [], req.token);
-    res.json(subsections);
-  } catch (error) {
-    console.error('Error searching subsections:', error);
-    res.status(500).json({ error: 'Failed to search subsections' });
-  }
-});
+    res.list(
+      subsections,
+      `Search results for '${term}' retrieved successfully`,
+    );
+  }),
+);
 
 // Get subsection by ID
-router.get('/:id', requireAuth, async (req, res) => {
-  try {
-    const query = getSubsectionById(req.params.id);
+router.get(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    if (!id) {
+      throw new ValidationError("Subsection ID is required");
+    }
+
+    const query = getSubsectionById(id);
     const subsection = await executeAuthQueryOne(query, [], req.token);
 
     if (!subsection) {
-      return res.status(404).json({ error: 'Subsection not found' });
+      throw new NotFoundError("Subsection");
     }
 
-    res.json(subsection);
-  } catch (error) {
-    console.error('Error fetching subsection:', error);
-    res.status(500).json({ error: 'Failed to fetch subsection' });
-  }
-});
+    res.success(subsection, "Subsection retrieved successfully");
+  }),
+);
 
 // Get subsection with all sensors
-router.get('/:id/with-sensors', requireAuth, async (req, res) => {
-  try {
-    const query = getSubsectionWithSensors(req.params.id);
+router.get(
+  "/:id/with-sensors",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    if (!id) {
+      throw new ValidationError("Subsection ID is required");
+    }
+
+    const query = getSubsectionWithSensors(id);
     const result = await executeAuthQuery(query, [], req.token);
 
     if (result.length === 0) {
-      return res.status(404).json({ error: 'Subsection not found' });
+      throw new NotFoundError("Subsection");
     }
 
     // Group sensors with subsection data
@@ -142,208 +183,410 @@ router.get('/:id/with-sensors', requireAuth, async (req, res) => {
       is_public: result[0].is_public,
       created_at: result[0].created_at,
       updated_at: result[0].updated_at,
-      sensors: result.filter(row => row.sensor_id).map(row => ({
-        id: row.sensor_id,
-        name: row.sensor_name,
-        category: row.sensor_category
-      }))
+      sensors: result
+        .filter((row) => row.sensor_id)
+        .map((row) => ({
+          id: row.sensor_id,
+          name: row.sensor_name,
+          category: row.sensor_category,
+        })),
     };
 
-    res.json(subsection);
-  } catch (error) {
-    console.error('Error fetching subsection with sensors:', error);
-    res.status(500).json({ error: 'Failed to fetch subsection with sensors' });
-  }
-});
+    res.success(subsection, "Subsection with sensors retrieved successfully");
+  }),
+);
 
 // Get subsection sensors
-router.get('/:id/sensors', requireAuth, async (req, res) => {
-  try {
-    const query = getSubsectionSensors(req.params.id);
+router.get(
+  "/:id/sensors",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    if (!id) {
+      throw new ValidationError("Subsection ID is required");
+    }
+
+    const query = getSubsectionSensors(id);
     const sensors = await executeAuthQuery(query, [], req.token);
-    res.json(sensors);
-  } catch (error) {
-    console.error('Error fetching subsection sensors:', error);
-    res.status(500).json({ error: 'Failed to fetch subsection sensors' });
-  }
-});
+    res.list(sensors, "Subsection sensors retrieved successfully");
+  }),
+);
 
 // Create new subsection
-router.post('/', requireAuth, async (req, res) => {
-  try {
+router.post(
+  "/",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const {
       title,
       time,
       rating,
       description,
       additionalNotes,
-      type = 'subsection',
-      isPublic = false
+      type = "subsection",
+      isPublic = false,
     } = req.body;
 
-    if (!title || !time) {
-      return res.status(400).json({ error: 'Title and time are required' });
+    // Validation
+    const errors = [];
+
+    if (!title?.trim()) {
+      errors.push({
+        field: "title",
+        message: "Title is required and cannot be empty",
+      });
+    }
+    if (!time) {
+      errors.push({
+        field: "time",
+        message: "Time is required",
+      });
+    }
+    if (title && title.length < 2) {
+      errors.push({
+        field: "title",
+        message: "Title must be at least 2 characters long",
+      });
+    }
+    if (title && title.length > 200) {
+      errors.push({
+        field: "title",
+        message: "Title must be less than 200 characters",
+      });
+    }
+    if (time && (isNaN(time) || time < 0)) {
+      errors.push({
+        field: "time",
+        message: "Time must be a positive number",
+      });
+    }
+    if (rating !== undefined && (isNaN(rating) || rating < 0 || rating > 5)) {
+      errors.push({
+        field: "rating",
+        message: "Rating must be a number between 0 and 5",
+      });
+    }
+    if (!["subsection", "break"].includes(type)) {
+      errors.push({
+        field: "type",
+        message: 'Type must be either "subsection" or "break"',
+        allowedValues: ["subsection", "break"],
+      });
+    }
+    if (description && description.length > 1000) {
+      errors.push({
+        field: "description",
+        message: "Description must be less than 1000 characters",
+      });
+    }
+    if (additionalNotes && additionalNotes.length > 1000) {
+      errors.push({
+        field: "additionalNotes",
+        message: "Additional notes must be less than 1000 characters",
+      });
     }
 
-    if (!['subsection', 'break'].includes(type)) {
-      return res.status(400).json({ error: 'Type must be either "subsection" or "break"' });
+    if (errors.length > 0) {
+      throw new ValidationError("Subsection validation failed", { errors });
     }
 
-    const { getUserContext } = require('../authDB.js');
+    const { getUserContext } = require("../authDB.js");
     const userContext = getUserContext(req.token);
 
     const subsectionId = uuidv4();
     const query = createSubsection(
       subsectionId,
-      title,
+      title.trim(),
       time,
       rating,
-      description,
-      additionalNotes,
+      description?.trim(),
+      additionalNotes?.trim(),
       type,
       userContext.userId,
-      isPublic
+      isPublic,
     );
 
-    await executeAuthInsert(query, [], req.token);
+    try {
+      await executeAuthInsert(query, [], req.token);
+    } catch (error) {
+      if (error.code === "ER_DUP_ENTRY") {
+        throw new ValidationError(
+          "A subsection with this title already exists",
+          {
+            field: "title",
+            value: title,
+          },
+        );
+      }
+      throw new DatabaseError("Failed to create subsection");
+    }
 
     // Return the created subsection
-    const createdSubsection = await executeAuthQueryOne(getSubsectionById(subsectionId), [], req.token);
-    res.status(201).json(createdSubsection);
-  } catch (error) {
-    console.error('Error creating subsection:', error);
-    res.status(500).json({ error: 'Failed to create subsection' });
-  }
-});
+    const createdSubsection = await executeAuthQueryOne(
+      getSubsectionById(subsectionId),
+      [],
+      req.token,
+    );
+    res.created(createdSubsection, "Subsection created successfully");
+  }),
+);
 
 // Update subsection
-router.put('/:id', requireAuth, async (req, res) => {
-  try {
+router.put(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
     const {
       title,
       time,
       rating,
       description,
       additionalNotes,
-      enabled = true
+      enabled = true,
     } = req.body;
-    const subsectionId = req.params.id;
 
-    if (!title || !time) {
-      return res.status(400).json({ error: 'Title and time are required' });
+    if (!id) {
+      throw new ValidationError("Subsection ID is required");
+    }
+
+    // Validation
+    const errors = [];
+
+    if (!title?.trim()) {
+      errors.push({
+        field: "title",
+        message: "Title is required and cannot be empty",
+      });
+    }
+    if (!time) {
+      errors.push({
+        field: "time",
+        message: "Time is required",
+      });
+    }
+    if (title && title.length < 2) {
+      errors.push({
+        field: "title",
+        message: "Title must be at least 2 characters long",
+      });
+    }
+    if (title && title.length > 200) {
+      errors.push({
+        field: "title",
+        message: "Title must be less than 200 characters",
+      });
+    }
+    if (time && (isNaN(time) || time < 0)) {
+      errors.push({
+        field: "time",
+        message: "Time must be a positive number",
+      });
+    }
+    if (rating !== undefined && (isNaN(rating) || rating < 0 || rating > 5)) {
+      errors.push({
+        field: "rating",
+        message: "Rating must be a number between 0 and 5",
+      });
+    }
+    if (description && description.length > 1000) {
+      errors.push({
+        field: "description",
+        message: "Description must be less than 1000 characters",
+      });
+    }
+    if (additionalNotes && additionalNotes.length > 1000) {
+      errors.push({
+        field: "additionalNotes",
+        message: "Additional notes must be less than 1000 characters",
+      });
+    }
+
+    if (errors.length > 0) {
+      throw new ValidationError("Subsection validation failed", { errors });
     }
 
     // Check if subsection exists
-    const existingSubsection = await executeAuthQueryOne(getSubsectionById(subsectionId), [], req.token);
+    const existingSubsection = await executeAuthQueryOne(
+      getSubsectionById(id),
+      [],
+      req.token,
+    );
     if (!existingSubsection) {
-      return res.status(404).json({ error: 'Subsection not found' });
+      throw new NotFoundError("Subsection");
     }
 
     const query = updateSubsection(
-      subsectionId,
-      title,
+      id,
+      title.trim(),
       time,
       rating,
-      description,
-      additionalNotes,
-      enabled
+      description?.trim(),
+      additionalNotes?.trim(),
+      enabled,
     );
-    const affectedRows = await executeAuthUpdate(query, [], req.token);
 
-    if (affectedRows === 0) {
-      return res.status(404).json({ error: 'Subsection not found' });
+    try {
+      const affectedRows = await executeAuthUpdate(query, [], req.token);
+
+      if (affectedRows === 0) {
+        throw new NotFoundError("Subsection");
+      }
+    } catch (error) {
+      if (error.code === "ER_DUP_ENTRY") {
+        throw new ValidationError(
+          "A subsection with this title already exists",
+          {
+            field: "title",
+            value: title,
+          },
+        );
+      }
+      throw error;
     }
 
     // Return updated subsection
-    const updatedSubsection = await executeAuthQueryOne(getSubsectionById(subsectionId), [], req.token);
-    res.json(updatedSubsection);
-  } catch (error) {
-    console.error('Error updating subsection:', error);
-    res.status(500).json({ error: 'Failed to update subsection' });
-  }
-});
+    const updatedSubsection = await executeAuthQueryOne(
+      getSubsectionById(id),
+      [],
+      req.token,
+    );
+    res.success(updatedSubsection, "Subsection updated successfully");
+  }),
+);
 
 // Delete subsection
-router.delete('/:id', requireAuth, async (req, res) => {
-  try {
-    const subsectionId = req.params.id;
+router.delete(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    if (!id) {
+      throw new ValidationError("Subsection ID is required");
+    }
 
     // Check if subsection exists
-    const existingSubsection = await executeAuthQueryOne(getSubsectionById(subsectionId), [], req.token);
+    const existingSubsection = await executeAuthQueryOne(
+      getSubsectionById(id),
+      [],
+      req.token,
+    );
     if (!existingSubsection) {
-      return res.status(404).json({ error: 'Subsection not found' });
+      throw new NotFoundError("Subsection");
     }
 
-    const query = deleteSubsection(subsectionId);
-    const affectedRows = await executeAuthUpdate(query, [], req.token);
+    const query = deleteSubsection(id);
 
-    if (affectedRows === 0) {
-      return res.status(404).json({ error: 'Subsection not found' });
+    try {
+      const affectedRows = await executeAuthUpdate(query, [], req.token);
+
+      if (affectedRows === 0) {
+        throw new NotFoundError("Subsection");
+      }
+    } catch (error) {
+      if (error.code === "ER_ROW_IS_REFERENCED_2") {
+        throw new ValidationError(
+          "Cannot delete subsection that is being used in sections",
+          {
+            details: "Remove the subsection from all sections before deleting",
+          },
+        );
+      }
+      throw error;
     }
 
-    res.json({ message: 'Subsection deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting subsection:', error);
-    res.status(500).json({ error: 'Failed to delete subsection' });
-  }
-});
+    res.success(null, "Subsection deleted successfully");
+  }),
+);
 
 // Add sensor to subsection
-router.post('/:id/sensors/:sensorId', requireAuth, async (req, res) => {
-  try {
+router.post(
+  "/:id/sensors/:sensorId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const { id: subsectionId, sensorId } = req.params;
 
+    if (!subsectionId) {
+      throw new ValidationError("Subsection ID is required");
+    }
+    if (!sensorId) {
+      throw new ValidationError("Sensor ID is required");
+    }
+
     // Check if subsection exists
-    const existingSubsection = await executeAuthQueryOne(getSubsectionById(subsectionId), [], req.token);
+    const existingSubsection = await executeAuthQueryOne(
+      getSubsectionById(subsectionId),
+      [],
+      req.token,
+    );
     if (!existingSubsection) {
-      return res.status(404).json({ error: 'Subsection not found' });
+      throw new NotFoundError("Subsection");
     }
 
     const query = addSensorToSubsection(subsectionId, sensorId);
-    await executeAuthUpdate(query, [], req.token);
 
-    res.json({ message: 'Sensor added to subsection successfully' });
-  } catch (error) {
-    console.error('Error adding sensor to subsection:', error);
-    res.status(500).json({ error: 'Failed to add sensor to subsection' });
-  }
-});
+    try {
+      await executeAuthUpdate(query, [], req.token);
+    } catch (error) {
+      if (error.code === "ER_DUP_ENTRY") {
+        throw new ValidationError("Sensor is already added to this subsection");
+      }
+      if (error.code === "ER_NO_REFERENCED_ROW_2") {
+        throw new NotFoundError("Sensor");
+      }
+      throw error;
+    }
+
+    res.success(null, "Sensor added to subsection successfully");
+  }),
+);
 
 // Remove sensor from subsection
-router.delete('/:id/sensors/:sensorId', requireAuth, async (req, res) => {
-  try {
+router.delete(
+  "/:id/sensors/:sensorId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
     const { id: subsectionId, sensorId } = req.params;
+
+    if (!subsectionId) {
+      throw new ValidationError("Subsection ID is required");
+    }
+    if (!sensorId) {
+      throw new ValidationError("Sensor ID is required");
+    }
 
     const query = removeSensorFromSubsection(subsectionId, sensorId);
     const affectedRows = await executeAuthUpdate(query, [], req.token);
 
     if (affectedRows === 0) {
-      return res.status(404).json({ error: 'Sensor not found in subsection' });
+      throw new NotFoundError("Sensor not found in subsection");
     }
 
-    res.json({ message: 'Sensor removed from subsection successfully' });
-  } catch (error) {
-    console.error('Error removing sensor from subsection:', error);
-    res.status(500).json({ error: 'Failed to remove sensor from subsection' });
-  }
-});
+    res.success(null, "Sensor removed from subsection successfully");
+  }),
+);
 
 // Remove all sensors from subsection
-router.delete('/:id/sensors', requireAuth, async (req, res) => {
-  try {
-    const subsectionId = req.params.id;
+router.delete(
+  "/:id/sensors",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id: subsectionId } = req.params;
+
+    if (!subsectionId) {
+      throw new ValidationError("Subsection ID is required");
+    }
 
     const query = removeAllSensorsFromSubsection(subsectionId);
     const affectedRows = await executeAuthUpdate(query, [], req.token);
 
-    res.json({
-      message: 'All sensors removed from subsection successfully',
-      removedCount: affectedRows
-    });
-  } catch (error) {
-    console.error('Error removing all sensors from subsection:', error);
-    res.status(500).json({ error: 'Failed to remove all sensors from subsection' });
-  }
-});
+    res.success(
+      { removedCount: affectedRows },
+      "All sensors removed from subsection successfully",
+    );
+  }),
+);
 
 module.exports = router;

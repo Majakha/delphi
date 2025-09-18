@@ -1,5 +1,12 @@
 const { getPool } = require("./database.js");
 const jwt = require("jsonwebtoken");
+const {
+  AuthenticationError,
+  InvalidTokenError,
+  MissingTokenError,
+  SessionExpiredError,
+  DatabaseError,
+} = require("./errors/CustomErrors.js");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -19,7 +26,10 @@ async function executeSystemQuery(query, params = []) {
       query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
       error: error.message,
     });
-    throw error;
+    throw new DatabaseError("System query execution failed", {
+      originalError: error.message,
+      query: query.substring(0, 100),
+    });
   }
 }
 
@@ -29,26 +39,53 @@ async function executeSystemQuery(query, params = []) {
  * @returns {Promise<object>} User context with userId
  */
 async function verifyToken(token) {
+  if (!token?.trim()) {
+    throw new MissingTokenError();
+  }
+
   try {
-    // Verify JWT token
+    // Verify JWT token structure and signature
     const decoded = jwt.verify(token, JWT_SECRET);
 
     // Check if token exists in database and is valid (using system query)
     const rows = await executeSystemQuery(
-      "SELECT user_id FROM access_tokens WHERE token = ? AND expires_at > NOW()",
+      "SELECT user_id, expires_at FROM access_tokens WHERE token = ? AND expires_at > NOW()",
       [token],
     );
 
     if (rows.length === 0) {
-      throw new Error("Token not found or expired");
+      // Check if token exists but is expired
+      const expiredTokenRows = await executeSystemQuery(
+        "SELECT user_id, expires_at FROM access_tokens WHERE token = ?",
+        [token],
+      );
+
+      if (expiredTokenRows.length > 0) {
+        throw new SessionExpiredError();
+      } else {
+        throw new InvalidTokenError();
+      }
     }
 
     return {
       userId: rows[0].user_id,
       token: token,
+      expiresAt: rows[0].expires_at,
     };
   } catch (error) {
-    throw new Error("Invalid or expired token");
+    if (error.name === "JsonWebTokenError") {
+      throw new InvalidTokenError("Invalid token format or signature");
+    } else if (error.name === "TokenExpiredError") {
+      throw new SessionExpiredError();
+    } else if (error instanceof AuthenticationError) {
+      // Re-throw our custom auth errors
+      throw error;
+    } else {
+      console.error("Token verification error:", error);
+      throw new AuthenticationError("Token verification failed", {
+        originalError: error.message,
+      });
+    }
   }
 }
 
@@ -60,21 +97,19 @@ async function verifyToken(token) {
  * @returns {Promise} Query results
  */
 async function executeAuthQuery(query, params = [], token) {
-  if (!token) {
-    throw new Error("Authentication token required");
-  }
-
   const userContext = await verifyToken(token);
 
   try {
     const pool = getPool();
     const [rows] = await pool.execute(query, params);
 
-    // Log query execution for audit
-    console.log(`Query executed by user ${userContext.userId}:`, {
-      query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
-      timestamp: new Date().toISOString(),
-    });
+    // Log query execution for audit (only in development)
+    if (process.env.NODE_ENV === "development") {
+      console.log(`Query executed by user ${userContext.userId}:`, {
+        query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     return rows;
   } catch (error) {
@@ -83,6 +118,8 @@ async function executeAuthQuery(query, params = [], token) {
       query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
       error: error.message,
     });
+
+    // Let MySQL errors bubble up to be handled by the error handler
     throw error;
   }
 }
@@ -107,20 +144,18 @@ async function executeAuthQueryOne(query, params = [], token) {
  * @returns {Promise} Insert ID
  */
 async function executeAuthInsert(query, params = [], token) {
-  if (!token) {
-    throw new Error("Authentication token required");
-  }
-
   const userContext = await verifyToken(token);
 
   try {
     const pool = getPool();
     const [result] = await pool.execute(query, params);
 
-    console.log(`Insert executed by user ${userContext.userId}:`, {
-      insertId: result.insertId,
-      timestamp: new Date().toISOString(),
-    });
+    if (process.env.NODE_ENV === "development") {
+      console.log(`Insert executed by user ${userContext.userId}:`, {
+        insertId: result.insertId,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     return result.insertId;
   } catch (error) {
@@ -128,6 +163,8 @@ async function executeAuthInsert(query, params = [], token) {
       userId: userContext.userId,
       error: error.message,
     });
+
+    // Let MySQL errors bubble up to be handled by the error handler
     throw error;
   }
 }
@@ -140,20 +177,18 @@ async function executeAuthInsert(query, params = [], token) {
  * @returns {Promise} Affected rows count
  */
 async function executeAuthUpdate(query, params = [], token) {
-  if (!token) {
-    throw new Error("Authentication token required");
-  }
-
   const userContext = await verifyToken(token);
 
   try {
     const pool = getPool();
     const [result] = await pool.execute(query, params);
 
-    console.log(`Update executed by user ${userContext.userId}:`, {
-      affectedRows: result.affectedRows,
-      timestamp: new Date().toISOString(),
-    });
+    if (process.env.NODE_ENV === "development") {
+      console.log(`Update executed by user ${userContext.userId}:`, {
+        affectedRows: result.affectedRows,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     return result.affectedRows;
   } catch (error) {
@@ -161,6 +196,8 @@ async function executeAuthUpdate(query, params = [], token) {
       userId: userContext.userId,
       error: error.message,
     });
+
+    // Let MySQL errors bubble up to be handled by the error handler
     throw error;
   }
 }
@@ -172,10 +209,6 @@ async function executeAuthUpdate(query, params = [], token) {
  * @returns {Promise} Array of results
  */
 async function executeAuthTransaction(queries, token) {
-  if (!token) {
-    throw new Error("Authentication token required");
-  }
-
   const userContext = await verifyToken(token);
   const pool = getPool();
   const connection = await pool.getConnection();
@@ -191,10 +224,12 @@ async function executeAuthTransaction(queries, token) {
 
     await connection.commit();
 
-    console.log(`Transaction executed by user ${userContext.userId}:`, {
-      queryCount: queries.length,
-      timestamp: new Date().toISOString(),
-    });
+    if (process.env.NODE_ENV === "development") {
+      console.log(`Transaction executed by user ${userContext.userId}:`, {
+        queryCount: queries.length,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     return results;
   } catch (error) {
@@ -203,45 +238,108 @@ async function executeAuthTransaction(queries, token) {
       userId: userContext.userId,
       error: error.message,
     });
-    throw error;
+
+    throw new DatabaseError("Transaction failed", {
+      originalError: error.message,
+      userId: userContext.userId,
+      queryCount: queries.length,
+    });
   } finally {
     connection.release();
   }
 }
 
 /**
- * Middleware to extract token from request headers
+ * Middleware to extract and validate token from request headers
  * @param {object} req - Express request object
  * @param {object} res - Express response object
  * @param {function} next - Next middleware function
  */
 function requireAuth(req, res, next) {
-  const token =
-    req.headers.authorization?.replace("Bearer ", "") ||
-    req.headers["x-access-token"] ||
-    req.query.token ||
-    req.body?.token ||
-    req.body?.access_token ||
-    req.body?.["x-access-token"];
+  try {
+    const token =
+      req.headers.authorization?.replace("Bearer ", "") ||
+      req.headers["x-access-token"] ||
+      req.query.token ||
+      req.body?.token ||
+      req.body?.access_token ||
+      req.body?.["x-access-token"];
 
-  if (!token) {
-    return res.status(401).json({ error: "Access token required" });
+    if (!token?.trim()) {
+      throw new MissingTokenError();
+    }
+
+    req.token = token;
+    next();
+  } catch (error) {
+    // Pass the error to the error handler middleware
+    next(error);
   }
-
-  req.token = token;
-  next();
 }
 
 /**
  * Get user context from token (without database verification)
+ * Used for quick token decoding when database check is not needed
  * @param {string} token - JWT token
  * @returns {object} Decoded token data
  */
 function getUserContext(token) {
   try {
+    if (!token?.trim()) {
+      throw new MissingTokenError();
+    }
+
     return jwt.verify(token, JWT_SECRET);
   } catch (error) {
-    throw new Error("Invalid token format");
+    if (error.name === "JsonWebTokenError") {
+      throw new InvalidTokenError("Invalid token format or signature");
+    } else if (error.name === "TokenExpiredError") {
+      throw new SessionExpiredError();
+    } else if (error instanceof AuthenticationError) {
+      throw error;
+    } else {
+      throw new AuthenticationError("Failed to decode token", {
+        originalError: error.message,
+      });
+    }
+  }
+}
+
+/**
+ * Async wrapper for auth middleware - catches async auth errors
+ * @param {function} fn - Async middleware function
+ * @returns {function} Express middleware
+ */
+function asyncAuthWrapper(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+/**
+ * Optional auth middleware - doesn't fail if no token provided
+ * @param {object} req - Express request object
+ * @param {object} res - Express response object
+ * @param {function} next - Next middleware function
+ */
+function optionalAuth(req, res, next) {
+  try {
+    const token =
+      req.headers.authorization?.replace("Bearer ", "") ||
+      req.headers["x-access-token"] ||
+      req.query.token ||
+      req.body?.token ||
+      req.body?.access_token ||
+      req.body?.["x-access-token"];
+
+    if (token?.trim()) {
+      req.token = token;
+    }
+
+    next();
+  } catch (error) {
+    // For optional auth, we don't fail - just continue without token
+    next();
   }
 }
 
@@ -255,4 +353,6 @@ module.exports = {
   executeAuthTransaction,
   requireAuth,
   getUserContext,
+  asyncAuthWrapper,
+  optionalAuth,
 };

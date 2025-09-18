@@ -20,9 +20,11 @@ export const predefinedSensors: Sensor[] = [
 ];
 
 // Function to get sensors sorted by category (most items first)
-export const getSortedSensorsByCategory = () => {
+export const getSortedSensorsByCategory = (
+  sensors: Sensor[] = predefinedSensors,
+) => {
   // Count items per category
-  const categoryCounts = predefinedSensors.reduce(
+  const categoryCounts = sensors.reduce(
     (counts, sensor) => {
       const category = sensor.category || "Other";
       counts[category] = (counts[category] || 0) + 1;
@@ -32,7 +34,7 @@ export const getSortedSensorsByCategory = () => {
   );
 
   // Group sensors by category
-  const groupedSensors = predefinedSensors.reduce(
+  const groupedSensors = sensors.reduce(
     (grouped, sensor) => {
       const category = sensor.category || "Other";
       if (!grouped[category]) {

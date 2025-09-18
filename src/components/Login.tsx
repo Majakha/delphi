@@ -1,15 +1,40 @@
-import React, { useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import React, { useState, useEffect } from "react";
+import { useAuth } from "../hooks/useDataProvider";
 
 const Login: React.FC = () => {
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const { login, isLoading, error } = useAuth();
+  const { login, loading, error, clearError } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password.trim()) {
-      await login(password.trim());
+      try {
+        await login(password.trim());
+        // Login successful - App component will handle the redirect
+      } catch (err) {
+        // Error is already handled by useAuth hook
+        console.error("Login failed:", err);
+      }
+    }
+  };
+
+  // Clear any previous errors when component mounts or password changes
+  useEffect(() => {
+    if (error && clearError) {
+      const timer = setTimeout(() => {
+        clearError();
+      }, 5000); // Clear error after 5 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [error, clearError]);
+
+  // Clear error when user starts typing
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+    if (error && clearError) {
+      clearError();
     }
   };
 
@@ -30,27 +55,30 @@ const Login: React.FC = () => {
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-700"
+              >
                 Password
               </label>
               <div className="mt-1 relative">
                 <input
                   id="password"
                   name="password"
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
                   required
                   className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={isLoading}
+                  onChange={handlePasswordChange}
+                  disabled={loading}
                 />
                 <button
                   type="button"
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={isLoading}
+                  disabled={loading}
                 >
                   <svg
                     className="h-5 w-5 text-gray-400 hover:text-gray-600"
@@ -79,7 +107,7 @@ const Login: React.FC = () => {
             </div>
 
             {error && (
-              <div className="rounded-md bg-red-50 p-4">
+              <div className="rounded-md bg-red-50 p-4 border border-red-200">
                 <div className="flex">
                   <div className="flex-shrink-0">
                     <svg
@@ -94,9 +122,30 @@ const Login: React.FC = () => {
                       />
                     </svg>
                   </div>
-                  <div className="ml-3">
+                  <div className="ml-3 flex-1">
                     <p className="text-sm font-medium text-red-800">{error}</p>
                   </div>
+                  {clearError && (
+                    <div className="ml-auto pl-3">
+                      <button
+                        onClick={clearError}
+                        className="text-red-400 hover:text-red-600"
+                      >
+                        <span className="sr-only">Dismiss</span>
+                        <svg
+                          className="h-4 w-4"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -104,10 +153,10 @@ const Login: React.FC = () => {
             <div>
               <button
                 type="submit"
-                disabled={isLoading || !password.trim()}
+                disabled={loading || !password.trim()}
                 className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isLoading ? (
+                {loading ? (
                   <>
                     <svg
                       className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
@@ -131,7 +180,7 @@ const Login: React.FC = () => {
                     Signing in...
                   </>
                 ) : (
-                  'Sign in'
+                  "Sign in"
                 )}
               </button>
             </div>
@@ -142,6 +191,9 @@ const Login: React.FC = () => {
               <p className="text-sm text-gray-500">
                 Secure access to protocol building tools
               </p>
+              {loading && (
+                <p className="text-xs text-blue-600 mt-2">Authenticating...</p>
+              )}
             </div>
           </div>
         </div>

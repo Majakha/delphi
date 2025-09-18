@@ -86,24 +86,6 @@ const SubsectionCard: React.FC<SubsectionCardProps> = ({
               )}
 
               <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <label
-                    className={`text-xs ${!subsection.enabled ? "text-gray-400" : "text-gray-500"} whitespace-nowrap`}
-                  >
-                    Minutes:
-                  </label>
-                  <input
-                    type="number"
-                    value={subsection.time}
-                    onChange={(e) =>
-                      handleChange("time", parseInt(e.target.value) || 0)
-                    }
-                    className={`input-field w-16 text-sm ${!subsection.enabled ? "bg-gray-100 text-gray-500" : ""}`}
-                    min="0"
-                    disabled={subsection.enabled === false}
-                  />
-                </div>
-
                 {!isBreak && (
                   <div className="flex flex-col items-center gap-1">
                     <label
@@ -136,18 +118,37 @@ const SubsectionCard: React.FC<SubsectionCardProps> = ({
               </div>
             </div>
           </div>
-          {!isBreak && subsection.enabled && (
-            <div className="mt-2 pl-6">
-              <AutoResizeTextarea
-                value={subsection.additionalNotes || ""}
+          <div className="flex flex-row max-w">
+            <div className="flex items-center flex-col gap-2">
+              <label
+                className={`text-xs ${!subsection.enabled ? "text-gray-400" : "text-gray-500"} whitespace-nowrap`}
+              >
+                Minutes:
+              </label>
+              <input
+                type="number"
+                value={subsection.time}
                 onChange={(e) =>
-                  handleChange("additionalNotes", e.target.value)
+                  handleChange("time", parseInt(e.target.value) || 0)
                 }
-                className="input-field resize-none text-sm"
-                placeholder="Add notes or comments for this subsection..."
+                className={`input-field w-16 text-sm ${!subsection.enabled ? "bg-gray-100 text-gray-500" : ""}`}
+                min="0"
+                disabled={subsection.enabled === false}
               />
             </div>
-          )}
+            {!isBreak && subsection.enabled && (
+              <div className="mt-2 pl-6">
+                <AutoResizeTextarea
+                  value={subsection.additionalNotes || ""}
+                  onChange={(e) =>
+                    handleChange("additionalNotes", e.target.value)
+                  }
+                  className="input-field resize-none text-sm"
+                  placeholder="Add notes or comments for this subsection..."
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Draggable>

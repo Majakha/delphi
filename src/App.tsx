@@ -4,23 +4,15 @@ import ProtocolEditor from "./components/ProtocolEditor";
 import ProtocolOverview from "./components/ProtocolOverview";
 import Login from "./components/Login";
 import Header from "./components/Header";
-import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import ProtocolSelector from "./components/ProtocolSelector";
 import { AlertCircle, X } from "lucide-react";
-import { useProtocol } from "./hooks/useDataProvider";
+import { useProtocol, useAuth } from "./hooks/useDataProvider";
 
 import "./index.css";
 
-const initialProtocol: Protocol = {
-  id: "protocol-1",
-  name: "New Dementia Study Protocol",
-  type: "in-lab",
-  sections: [],
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
-
 const AppContent: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const [currentProtocol, setCurrentProtocol] = useState<Protocol | null>(null);
+  const [showProtocolSelector, setShowProtocolSelector] = useState(false);
   const [validationAlert, setValidationAlert] = useState<{
     show: boolean;
     message: string;
@@ -34,21 +26,28 @@ const AppContent: React.FC = () => {
     message: "",
     missingItems: [],
   });
-  // Use a default protocol ID for now - in a real app this would come from routing
-  const protocolId = "protocol-1";
+
+  // Only use the protocol hook if we have a current protocol selected
   const {
     protocol: loadedProtocol,
     updateProtocol,
     loading: protocolLoading,
     error: protocolError,
-  } = useProtocol(protocolId);
+  } = useProtocol(currentProtocol?.id || "");
 
-  const [protocol, setProtocol] = useState<Protocol>(initialProtocol);
+  const [protocol, setProtocol] = useState<Protocol | null>(null);
   const [hasError, setHasError] = useState(false);
+
+  // Show protocol selector when no protocol is selected
+  useEffect(() => {
+    if (!currentProtocol && !showProtocolSelector) {
+      setShowProtocolSelector(true);
+    }
+  }, [currentProtocol, showProtocolSelector]);
 
   // Update local state when protocol is loaded
   useEffect(() => {
-    if (loadedProtocol) {
+    if (loadedProtocol && loadedProtocol.sections && currentProtocol) {
       // Ensure sections and subsections have enabled property for backward compatibility
       const sectionsWithEnabled = loadedProtocol.sections.map(
         (section: any) => ({
@@ -66,9 +65,11 @@ const AppContent: React.FC = () => {
         ...loadedProtocol,
         sections: sectionsWithEnabled,
         type: loadedProtocol.type || "in-lab",
+        createdAt: new Date(loadedProtocol.createdAt),
+        updatedAt: new Date(loadedProtocol.updatedAt),
       });
     }
-  }, [loadedProtocol]);
+  }, [loadedProtocol, currentProtocol]);
 
   // Handle protocol loading error
   useEffect(() => {
@@ -77,7 +78,12 @@ const AppContent: React.FC = () => {
     }
   }, [protocolError]);
 
-  // Protocol is automatically saved via DataProvider, no need for manual saving
+  const handleProtocolSelect = (selectedProtocol: Protocol) => {
+    setCurrentProtocol(selectedProtocol);
+    setProtocol(selectedProtocol);
+    setShowProtocolSelector(false);
+    setHasError(false);
+  };
 
   const handleProtocolChange = (updatedProtocol: Protocol) => {
     try {
@@ -89,12 +95,14 @@ const AppContent: React.FC = () => {
       setProtocol(protocolWithUpdatedTime);
 
       // Save to DataProvider (convert to Partial<Protocol> for updateProtocol)
-      const partialUpdate: Partial<Protocol> = {
-        ...protocolWithUpdatedTime,
-        createdAt: protocolWithUpdatedTime.createdAt,
-        updatedAt: protocolWithUpdatedTime.updatedAt,
-      };
-      updateProtocol(partialUpdate);
+      if (currentProtocol) {
+        const partialUpdate: Partial<Protocol> = {
+          ...protocolWithUpdatedTime,
+          createdAt: protocolWithUpdatedTime.createdAt,
+          updatedAt: protocolWithUpdatedTime.updatedAt,
+        };
+        updateProtocol(partialUpdate);
+      }
       setHasError(false); // Reset error state on successful update
     } catch (error) {
       console.error("Error updating protocol:", error);
@@ -102,22 +110,35 @@ const AppContent: React.FC = () => {
     }
   };
 
-  if (isLoading || protocolLoading) {
+  const handleSwitchProtocol = () => {
+    setShowProtocolSelector(true);
+  };
+
+  const handleCreateNewProtocol = () => {
+    setCurrentProtocol(null);
+    setProtocol(null);
+    setShowProtocolSelector(true);
+  };
+
+  // Show protocol selector
+  if (showProtocolSelector) {
+    return <ProtocolSelector onProtocolSelect={handleProtocolSelect} />;
+  }
+
+  // Show loading while protocol is being loaded
+  if (protocolLoading && currentProtocol) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-600">Loading protocol...</p>
         </div>
       </div>
     );
   }
 
-  if (!isAuthenticated) {
-    return <Login />;
-  }
-
-  if (hasError) {
+  // Show error state
+  if (hasError || !protocol) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-md mx-auto p-6">
@@ -142,17 +163,16 @@ const AppContent: React.FC = () => {
           </p>
           <div className="space-y-2">
             <button
-              onClick={() => {
-                setProtocol(initialProtocol);
-                const partialUpdate: Partial<Protocol> = {
-                  ...initialProtocol,
-                };
-                updateProtocol(partialUpdate);
-                setHasError(false);
-              }}
+              onClick={handleSwitchProtocol}
               className="btn-primary w-full"
             >
-              Start Fresh
+              Select Different Protocol
+            </button>
+            <button
+              onClick={handleCreateNewProtocol}
+              className="btn-secondary w-full"
+            >
+              Create New Protocol
             </button>
             <button
               onClick={() => window.location.reload()}
@@ -168,7 +188,19 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
-      <Header />
+      <Header
+        protocol={protocol}
+        onProtocolChange={handleProtocolChange}
+        protocolName={protocol.name}
+        lastUpdated={protocol.updatedAt}
+        enabledSections={protocol.sections.filter((s) => s.enabled).length}
+        totalSections={protocol.sections.length}
+        enabledTotalTime={protocol.sections
+          .filter((s) => s.enabled)
+          .reduce((total, section) => total + section.time, 0)}
+        onSwitchProtocol={handleSwitchProtocol}
+        onCreateNewProtocol={handleCreateNewProtocol}
+      />
       <div className="bg-white shadow-sm"></div>
 
       <main className="flex-1 overflow-y-auto flex">
@@ -255,12 +287,29 @@ const AppContent: React.FC = () => {
   );
 };
 
-function App() {
-  return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
-  );
-}
+const App: React.FC = () => {
+  // Handle authentication at the top level
+  const { isAuthenticated, error: authError, loading: authLoading } = useAuth();
+
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
+  // Show the main app content
+  return <AppContent />;
+};
 
 export default App;

@@ -1,6 +1,13 @@
 const express = require("express");
 const { initDB } = require("./database.js");
 
+// Import middleware
+const {
+  errorHandler,
+  notFoundHandler,
+} = require("./middleware/errorHandler.js");
+const { attachResponseHelpers } = require("./utils/responseHelper.js");
+
 // Import route modules
 const authRoutes = require("./routes/auth.js");
 const userRoutes = require("./routes/users.js");
@@ -10,16 +17,25 @@ const sectionRoutes = require("./routes/sections.js");
 const protocolRoutes = require("./routes/protocols.js");
 
 const app = express();
-const PORT = process.env.PORT || 3101;
+const PORT = process.env.API_PORT || process.env.PORT || 3001;
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Request parsing middleware
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// CORS middleware (if needed)
+// Trust proxy for proper IP handling
+app.set("trust proxy", true);
+
+// Attach response helpers to all routes
+app.use(attachResponseHelpers);
+
+// CORS middleware
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+  );
   res.header(
     "Access-Control-Allow-Headers",
     "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-access-token",
@@ -32,13 +48,27 @@ app.use((req, res, next) => {
   }
 });
 
+// Request logging middleware (development only)
+if (process.env.NODE_ENV === "development") {
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
+
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    service: "Delphi API v2",
-  });
+  res.success(
+    {
+      status: "OK",
+      timestamp: new Date().toISOString(),
+      service: "Delphi API v2",
+      version: "2.0.0",
+      environment: process.env.NODE_ENV || "development",
+      uptime: process.uptime(),
+    },
+    "Service is healthy",
+  );
 });
 
 // Mount routes
@@ -51,74 +81,106 @@ app.use("/protocols", protocolRoutes);
 
 // Root endpoint
 app.get("/", (req, res) => {
-  res.json({
-    message: "Delphi API v2",
-    version: "2.0.0",
-    endpoints: {
-      auth: "/auth",
-      users: "/users",
-      sensors: "/sensors",
-      subsections: "/subsections",
-      sections: "/sections",
-      protocols: "/protocols",
-      health: "/health",
+  res.success(
+    {
+      message: "Delphi API v2",
+      version: "2.0.0",
+      documentation: "https://docs.delphi-api.com",
+      endpoints: {
+        auth: "/auth",
+        users: "/users",
+        sensors: "/sensors",
+        subsections: "/subsections",
+        sections: "/sections",
+        protocols: "/protocols",
+        health: "/health",
+      },
+      features: [
+        "Authentication & Authorization",
+        "Comprehensive Error Handling",
+        "Input Validation",
+        "Structured API Responses",
+        "Database Transaction Support",
+      ],
     },
-  });
+    "Welcome to Delphi API v2",
+  );
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({
-    error: "Internal server error",
-    message:
-      process.env.NODE_ENV === "development"
-        ? err.message
-        : "Something went wrong",
-  });
-});
+// 404 handler for unmatched routes
+app.use(notFoundHandler);
 
-// 404 handler
-app.use("*", (req, res) => {
-  res.status(404).json({
-    error: "Endpoint not found",
-    path: req.originalUrl,
-    method: req.method,
-  });
-});
+// Centralized error handler (must be last middleware)
+app.use(errorHandler);
 
 // Initialize database and start server
 async function startServer() {
   try {
     // Initialize database connection
     await initDB();
-    console.log("Database initialized successfully");
+    console.log("✅ Database initialized successfully");
 
     // Start the server
-    app.listen(PORT, () => {
-      console.log(`Delphi API v2 server running on port ${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/health`);
-      console.log(`API endpoints: http://localhost:${PORT}/`);
+    const server = app.listen(PORT, () => {
+      console.log(`🚀 Delphi API v2 server running on port ${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/health`);
+      console.log(`📚 API endpoints: http://localhost:${PORT}/`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
+
+      if (process.env.NODE_ENV === "development") {
+        console.log(`🔧 Development mode: Enhanced logging enabled`);
+      }
     });
+
+    // Handle server errors
+    server.on("error", (error) => {
+      if (error.code === "EADDRINUSE") {
+        console.error(`❌ Port ${PORT} is already in use`);
+        process.exit(1);
+      } else {
+        console.error("❌ Server error:", error);
+        process.exit(1);
+      }
+    });
+
+    return server;
   } catch (error) {
-    console.error("Failed to start server:", error);
+    console.error("❌ Failed to start server:", error);
     process.exit(1);
   }
 }
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("\nShutting down server gracefully...");
-  const { closeConnection } = require("./database.js");
-  await closeConnection();
-  process.exit(0);
+// Graceful shutdown handler
+async function gracefulShutdown(signal) {
+  console.log(`\n⚡ Received ${signal}. Shutting down gracefully...`);
+
+  try {
+    const { closeConnection } = require("./database.js");
+    await closeConnection();
+    console.log("✅ Database connections closed");
+
+    console.log("✅ Server shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Error during shutdown:", error);
+    process.exit(1);
+  }
+}
+
+// Register shutdown handlers
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+  gracefulShutdown("uncaughtException");
 });
 
-process.on("SIGTERM", async () => {
-  console.log("\nShutting down server gracefully...");
-  const { closeConnection } = require("./database.js");
-  await closeConnection();
-  process.exit(0);
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
+  gracefulShutdown("unhandledRejection");
 });
 
 // Start the server

@@ -1,19 +1,18 @@
 FROM mysql:8.0
 
-# Set environment variables
-ENV MYSQL_DATABASE=mydatabase
-ENV MYSQL_ROOT_PASSWORD=example
-ENV MYSQL_USER=delphi
-ENV MYSQL_PASSWORD=delphi123
-
-# Copy initialization scripts
-COPY init.sql /docker-entrypoint-initdb.d/
+# Copy SQL initialization script
+COPY schema.sql /docker-entrypoint-initdb.d/
 
 # Set proper permissions
-RUN chmod 644 /docker-entrypoint-initdb.d/init.sql
+RUN chmod 644 /docker-entrypoint-initdb.d/schema.sql
 
 # Expose MySQL port
 EXPOSE 3306
 
-# Use the default MySQL entrypoint
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD mysqladmin ping -h localhost || exit 1
+
+# Use MySQL's default entrypoint
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["mysqld"]

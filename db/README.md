@@ -6,11 +6,11 @@ MySQL database setup for the Delphi Protocol Builder application.
 
 ### Setup (First Time)
 ```bash
-# Copy centralized environment template
-cp .env.shared.example .env.shared
+# Copy centralized environment template (from project root)
+cp .env.example .env
 
-# Edit .env.shared with your secure passwords
-nano .env.shared
+# Edit .env with your secure passwords
+nano .env
 ```
 
 ### Option 1: Database Only
@@ -34,27 +34,28 @@ docker-compose up -d
 ## Database Configuration
 
 ### Centralized Environment Variables
-Environment variables are now centralized in `.env.shared` at the project root:
-- `DB_HOST`: Database host (default: `db` for containers, `localhost` for local)
+Environment variables are now centralized in `.env` at the project root:
+- `DB_HOST`: Database host (default: `localhost`, `db` in Docker)
 - `DB_PORT`: Database port (default: `3306`)
-- `DB_NAME`: Database name (default: `mydatabase`)
-- `DB_USER`: Application user (default: `delphi`)
+- `DB_NAME`: Database name (default: `delphi_db`)
+- `DB_USER`: Application user (default: `delphi_user`)
 - `DB_PASSWORD`: Application user password
-- `DB_ROOT_PASSWORD`: Root user password
-- `MYSQL_*`: Docker MySQL environment variables
+- `JWT_SECRET`: Secret for JWT tokens
+- `API_PORT`: API server port (default: `3001`)
 
-### Database-Specific Configuration
-Performance and MySQL-specific settings are configured in:
-- `db/my.cnf`: MySQL configuration file (performance tuning, logging, etc.)
-- `db/Dockerfile`: Container build configuration
+### Database Initialization
+The database uses initialization scripts that read environment variables:
+- `db/01-init.sh`: Creates database and user with environment variables
+- `db/02-schema.sql`: Creates tables and inserts sample data
+- `db/my.cnf`: MySQL configuration file (performance tuning)
 
 ### Connection Details
-Connection details are defined in `.env.shared`:
-- **Host**: `db` (from containers) or `localhost` (local development)
-- **Port**: `3306`
-- **Database**: Value from `DB_NAME` in `.env.shared`
-- **Username**: Value from `DB_USER` in `.env.shared`
-- **Password**: Value from `DB_PASSWORD` in `.env.shared`
+Connection details are defined in `.env`:
+- **Host**: `localhost` (local) or `db` (Docker container)
+- **Port**: `3306` (or value from `DB_PORT`)
+- **Database**: Value from `DB_NAME` (default: `delphi_db`)
+- **Username**: Value from `DB_USER` (default: `delphi_user`)
+- **Password**: Value from `DB_PASSWORD`
 
 ## Database Schema
 
@@ -63,7 +64,7 @@ Connection details are defined in `.env.shared`:
 - `access_tokens` - JWT token storage
 - `sensors` - Sensor definitions
 - `subsections` - Protocol subsections
-- `sections` - Protocol sections  
+- `sections` - Protocol sections
 - `protocols` - Complete protocols
 - `component_usage` - Usage analytics
 
@@ -84,11 +85,11 @@ The database includes default sample data:
 
 ### Access MySQL CLI
 ```bash
-# Connect as root (use DB_ROOT_PASSWORD from .env.shared)
-docker exec -it delphi-database mysql -u root -p
+# Connect as root (use password from .env)
+docker exec -it delphi-db-1 mysql -u root -p
 
-# Connect as application user (use DB_PASSWORD from .env.shared)
-docker exec -it delphi-database mysql -u delphi -p
+# Connect as application user (use DB_USER and DB_PASSWORD from .env)
+docker exec -it delphi-db-1 mysql -u ${DB_USER} -p
 ```
 
 ### Reset Database
@@ -96,17 +97,17 @@ docker exec -it delphi-database mysql -u delphi -p
 # Stop and remove containers + volumes
 docker-compose down -v
 
-# Rebuild and start fresh
-docker-compose up --build -d db
+# Start fresh (no rebuild needed - uses official MySQL image)
+docker-compose up -d db
 ```
 
 ### Backup Database
 ```bash
-# Create backup
-docker exec delphi-database mysqldump -u root -pexample mydatabase > backup.sql
+# Create backup (replace passwords with values from .env)
+docker exec delphi-db-1 mysqldump -u root -p${DB_PASSWORD} ${DB_NAME} > backup.sql
 
 # Restore backup
-docker exec -i delphi-database mysql -u root -pexample mydatabase < backup.sql
+docker exec -i delphi-db-1 mysql -u root -p${DB_PASSWORD} ${DB_NAME} < backup.sql
 ```
 
 ### View Logs
@@ -124,20 +125,19 @@ docker logs [container_name]
 If you prefer running MySQL locally instead of Docker:
 
 1. Install MySQL 8.0+
-2. Create database: `CREATE DATABASE mydatabase;`
-3. Run init script: `mysql -u root -p mydatabase < db/init.sql`
-4. Update `.env.shared`: Set `DB_HOST=localhost`
-5. Optional: Copy `db/my.cnf` settings to your local MySQL configuration
+2. Set up `.env` with `DB_HOST=localhost`
+3. Run: `bash db/01-init.sh` (after installing mysql client)
+4. Or manually create database and run `db/02-schema.sql`
 
 ### Schema Changes
-1. Modify `db/init.sql`
-2. Rebuild container: `docker-compose up --build -d db`
+1. Modify `db/02-schema.sql`
+2. Restart container: `docker-compose up -d db`
 3. Or apply changes manually via MySQL CLI
 
 ### Performance Tuning
 1. Modify `db/my.cnf` for MySQL-specific settings
-2. Update `.env.shared` for container-level environment variables
-3. Rebuild: `docker-compose up --build -d db`
+2. Update `.env` for environment variables
+3. Restart: `docker-compose restart db`
 
 ## Troubleshooting
 
@@ -166,7 +166,7 @@ docker-compose up --build -d db
 
 ## Security Notes
 
-⚠️ **Development Only**: Default passwords in `.env.shared.example` are insecure and should be changed:
+⚠️ **Development Only**: Default passwords in `.env.example` are insecure and should be changed:
 
 ```bash
 # Generate secure passwords
@@ -175,14 +175,14 @@ openssl rand -base64 64  # For JWT secrets
 ```
 
 ### Security Checklist:
-1. Copy `.env.shared.example` to `.env.shared`
+1. Copy `.env.example` to `.env`
 2. Replace all placeholder passwords with secure values
-3. Never commit `.env.shared` to version control
+3. Never commit `.env` to version control
 4. Use different passwords for each environment (dev/staging/prod)
 5. Consider using Docker secrets for production deployments
 
 ### File Structure:
-- `/.env.shared` - Centralized environment variables (shared by API and DB)
+- `/.env` - Centralized environment variables (shared by API and DB)
+- `/db/01-init.sh` - Database and user creation script
+- `/db/02-schema.sql` - Database schema and sample data
 - `/db/my.cnf` - MySQL performance and configuration settings
-- `/db/init.sql` - Database schema and sample data
-- `/db/Dockerfile` - Database container configuration

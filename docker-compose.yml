@@ -1,34 +1,44 @@
-version: "3.9"
 services:
   api:
     build: ./api
     environment:
       DB_HOST: db
-      DB_USER: root
-      DB_PASSWORD: example
-      DB_NAME: mydatabase
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_PORT: ${DB_PORT}
+      API_PORT: ${API_PORT}
+      JWT_SECRET: ${JWT_SECRET}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+      NODE_ENV: ${NODE_ENV}
     ports:
-      - "3001:3001"
+      - "${API_PORT}:${API_PORT}"
     depends_on:
       - db
 
   app:
     build: .
+    environment:
+      REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL}
+      REACT_APP_PORT: ${REACT_APP_PORT}
+      NODE_ENV: ${NODE_ENV}
     ports:
-      - "3000:3000"
+      - "${REACT_APP_PORT}:${REACT_APP_PORT}"
     depends_on:
       - api
 
   db:
-    image: mysql:8
+    build: ./db
     environment:
-      MYSQL_ROOT_PASSWORD: example
-      MYSQL_DATABASE: mydatabase
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "3306:3306"
+      - "${DB_PORT}:3306"
     volumes:
       - db-data:/var/lib/mysql
-      - ./db-init:/docker-entrypoint-initdb.d
+      - ./db:/docker-entrypoint-initdb.d
 
 volumes:
   db-data:

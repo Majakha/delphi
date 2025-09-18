@@ -21,6 +21,7 @@
     "web-vitals": "^2.1.0"
   },
   "scripts": {
+    "dev": "nodemon --exec \"npm run start\"",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.4.14",
+    "nodemon": "^3.1.10",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.3.0"
   }

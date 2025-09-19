@@ -1,13 +1,19 @@
-import { AuthTokens, AuthResponse, User, ApiError } from "./types";
+import {
+  AuthTokens,
+  AuthResponse,
+  User,
+  ApiError,
+  RegisterData,
+  LoginData,
+  ChangePasswordData,
+} from "./types";
 import { StorageManager } from "./StorageManager";
 
 export class AuthManager {
   private storageManager: StorageManager;
   private accessToken: string | null = null;
-  private refreshTokenValue: string | null = null;
   private tokenExpiry: string | null = null;
   private user: User | null = null;
-  private refreshPromise: Promise<void> | null = null;
 
   constructor(storageManager: StorageManager) {
     this.storageManager = storageManager;
@@ -19,17 +25,12 @@ export class AuthManager {
    */
   private loadTokensFromStorage(): void {
     this.accessToken = this.storageManager.get<string>("access_token");
-    this.refreshTokenValue = this.storageManager.get<string>("refresh_token");
     this.tokenExpiry = this.storageManager.get<string>("token_expiry");
+    const storedUser = this.storageManager.get<User>("user");
 
     // Only set user if we have a valid token that hasn't expired
-    if (this.accessToken && !this.isTokenExpired(0)) {
-      try {
-        this.user = this.decodeUserFromToken(this.accessToken);
-      } catch (error) {
-        // Token is invalid, clear all auth data
-        this.clearAuthTokens();
-      }
+    if (this.accessToken && storedUser && !this.isTokenExpired(0)) {
+      this.user = storedUser;
     } else if (this.accessToken) {
       // Token exists but is expired, clear auth data
       this.clearAuthTokens();
@@ -37,20 +38,17 @@ export class AuthManager {
   }
 
   /**
-   * Store authentication tokens
+   * Store authentication tokens and user data
    */
-  private setAuthTokens(authData: AuthTokens): void {
-    this.accessToken = authData.access_token;
-    this.refreshTokenValue = authData.refresh_token;
-    this.tokenExpiry = authData.expires_at || this.getDefaultExpiry();
+  private setAuthTokens(token: string, expiresAt: string, user: User): void {
+    this.accessToken = token;
+    this.tokenExpiry = expiresAt;
+    this.user = user;
 
     // Store in localStorage
     this.storageManager.set("access_token", this.accessToken);
-    this.storageManager.set("refresh_token", this.refreshTokenValue);
     this.storageManager.set("token_expiry", this.tokenExpiry);
-
-    // Decode user from token
-    this.user = this.decodeUserFromToken(this.accessToken);
+    this.storageManager.set("user", user);
   }
 
   /**
@@ -58,34 +56,13 @@ export class AuthManager {
    */
   private clearAuthTokens(): void {
     this.accessToken = null;
-    this.refreshTokenValue = null;
     this.tokenExpiry = null;
     this.user = null;
 
     // Clear from localStorage
     this.storageManager.remove("access_token");
-    this.storageManager.remove("refresh_token");
     this.storageManager.remove("token_expiry");
-  }
-
-  /**
-   * Decode user information from JWT token
-   */
-  private decodeUserFromToken(token: string): User | null {
-    try {
-      const payload = JSON.parse(atob(token.split(".")[1]));
-      return payload.user || payload || null;
-    } catch (error) {
-      console.error("Failed to decode user from token:", error);
-      return null;
-    }
-  }
-
-  /**
-   * Get default token expiry (1 hour from now)
-   */
-  private getDefaultExpiry(): string {
-    return new Date(Date.now() + 3600000).toISOString();
+    this.storageManager.remove("user");
   }
 
   /**
@@ -102,58 +79,79 @@ export class AuthManager {
   }
 
   /**
-   * Make API request to refresh token
+   * Make API request with proper error handling
    */
-  private async refreshTokenRequest(baseUrl: string): Promise<AuthTokens> {
-    if (!this.refreshTokenValue) {
-      throw new Error("No refresh token available");
-    }
-
-    const response = await fetch(`${baseUrl}/auth/refresh`, {
-      method: "POST",
+  private async makeAuthRequest<T>(
+    baseUrl: string,
+    endpoint: string,
+    method: string = "POST",
+    body?: any,
+  ): Promise<T> {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      method,
       headers: {
         "Content-Type": "application/json",
+        ...(this.accessToken && {
+          Authorization: `Bearer ${this.accessToken}`,
+        }),
       },
-      body: JSON.stringify({ refresh_token: this.refreshTokenValue }),
+      body: body ? JSON.stringify(body) : undefined,
     });
 
+    const responseData = await response.json();
+
     if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(
-        `Token refresh failed: ${errorData || response.statusText}`,
-      );
+      // Handle structured error responses from new API
+      const errorMessage =
+        responseData?.error?.message ||
+        responseData?.message ||
+        `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMessage);
     }
 
-    return await response.json();
+    return responseData;
   }
 
   /**
-   * Authenticate with password only
+   * Register a new user account
    */
-  async login(baseUrl: string, password: string): Promise<User> {
+  async register(baseUrl: string, registerData: RegisterData): Promise<User> {
     try {
-      const response = await fetch(`${baseUrl}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ password }),
-      });
+      const response = await this.makeAuthRequest<{
+        data: { username: string; email: string };
+      }>(baseUrl, "/auth/register", "POST", registerData);
 
-      if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Login failed: ${errorData || response.statusText}`);
-      }
+      return {
+        id: "", // Will be set on login
+        username: response.data.username,
+        email: response.data.email,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Registration failed");
+    }
+  }
 
-      const authData: AuthResponse = await response.json();
+  /**
+   * Authenticate with username/email and password
+   */
+  async login(baseUrl: string, loginData: LoginData): Promise<User> {
+    try {
+      const response = await this.makeAuthRequest<AuthResponse>(
+        baseUrl,
+        "/auth/login",
+        "POST",
+        loginData,
+      );
 
-      this.setAuthTokens({
-        access_token: authData.data.token,
-        refresh_token: "", // New API doesn't use refresh tokens yet
-        expires_at: authData.data.expiresAt,
-      });
-      this.user = authData.data.user;
-      return authData.data.user;
+      this.setAuthTokens(
+        response.data.token,
+        response.data.expiresAt,
+        response.data.user,
+      );
+
+      return response.data.user;
     } catch (error) {
       throw error instanceof Error ? error : new Error("Login failed");
     }
@@ -166,15 +164,11 @@ export class AuthManager {
     try {
       // Call logout endpoint if we have a token
       if (this.accessToken) {
-        await fetch(`${baseUrl}/auth/logout`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.accessToken}`,
-            "Content-Type": "application/json",
+        await this.makeAuthRequest(baseUrl, "/auth/logout", "POST").catch(
+          () => {
+            // Ignore logout errors - we're clearing local tokens anyway
           },
-        }).catch(() => {
-          // Ignore logout errors - we're clearing local tokens anyway
-        });
+        );
       }
     } finally {
       this.clearAuthTokens();
@@ -182,31 +176,121 @@ export class AuthManager {
   }
 
   /**
-   * Refresh authentication token
+   * Verify current token with server
    */
-  async refreshToken(baseUrl: string): Promise<void> {
-    // Prevent multiple simultaneous refresh requests
-    if (this.refreshPromise) {
-      return this.refreshPromise;
+  async verifyToken(baseUrl: string): Promise<User> {
+    if (!this.accessToken) {
+      throw new Error("No token available");
     }
 
-    this.refreshPromise = (async () => {
-      try {
-        const authData = await this.refreshTokenRequest(baseUrl);
-        this.setAuthTokens(authData);
-      } catch (error) {
-        this.clearAuthTokens();
-        throw error;
-      } finally {
-        this.refreshPromise = null;
-      }
-    })();
+    try {
+      const response = await this.makeAuthRequest<{ data: { user: User } }>(
+        baseUrl,
+        "/auth/verify",
+        "GET",
+      );
 
-    return this.refreshPromise;
+      // Update user data from server
+      this.user = response.data.user;
+      this.storageManager.set("user", this.user);
+
+      return response.data.user;
+    } catch (error) {
+      // Token verification failed, clear auth data
+      this.clearAuthTokens();
+      throw error instanceof Error
+        ? error
+        : new Error("Token verification failed");
+    }
   }
 
   /**
-   * Ensure we have a valid token, refresh if necessary
+   * Get current user profile from server
+   */
+  async getProfile(baseUrl: string): Promise<User> {
+    if (!this.accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      const response = await this.makeAuthRequest<{ data: User }>(
+        baseUrl,
+        "/auth/profile",
+        "GET",
+      );
+
+      // Update stored user data
+      this.user = response.data;
+      this.storageManager.set("user", this.user);
+
+      return response.data;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Failed to get profile");
+    }
+  }
+
+  /**
+   * Update user profile
+   */
+  async updateProfile(
+    baseUrl: string,
+    updates: { username?: string; email?: string },
+  ): Promise<User> {
+    if (!this.accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      const response = await this.makeAuthRequest<{ data: User }>(
+        baseUrl,
+        "/auth/profile",
+        "PUT",
+        updates,
+      );
+
+      // Update stored user data
+      this.user = response.data;
+      this.storageManager.set("user", this.user);
+
+      return response.data;
+    } catch (error) {
+      throw error instanceof Error
+        ? error
+        : new Error("Failed to update profile");
+    }
+  }
+
+  /**
+   * Change user password
+   */
+  async changePassword(
+    baseUrl: string,
+    passwordData: ChangePasswordData,
+  ): Promise<void> {
+    if (!this.accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      await this.makeAuthRequest(
+        baseUrl,
+        "/auth/password",
+        "PUT",
+        passwordData,
+      );
+
+      // Password change successful, tokens may have been invalidated
+      // Clear local tokens to force re-login
+      this.clearAuthTokens();
+    } catch (error) {
+      throw error instanceof Error
+        ? error
+        : new Error("Failed to change password");
+    }
+  }
+
+  /**
+   * Ensure we have a valid token
    */
   async ensureValidToken(baseUrl: string): Promise<void> {
     if (!this.accessToken) {
@@ -215,9 +299,9 @@ export class AuthManager {
 
     if (this.isTokenExpired()) {
       try {
-        await this.refreshToken(baseUrl);
+        await this.verifyToken(baseUrl);
       } catch (error) {
-        // Token refresh failed, clear tokens
+        // Token verification failed, clear tokens
         this.clearAuthTokens();
         throw error;
       }
@@ -276,17 +360,39 @@ export class AuthManager {
    * Handle unauthorized response (401)
    */
   async handleUnauthorized(baseUrl: string): Promise<void> {
-    if (this.refreshTokenValue) {
+    // Try to verify token first
+    if (this.accessToken) {
       try {
-        await this.refreshToken(baseUrl);
+        await this.verifyToken(baseUrl);
         return;
       } catch (error) {
-        // Refresh failed, fall through to logout
+        // Verification failed, fall through to logout
       }
     }
 
-    // No refresh token or refresh failed
+    // Clear tokens and throw error
     this.clearAuthTokens();
     throw new Error("Session expired");
+  }
+
+  /**
+   * Clean up expired tokens on server
+   */
+  async cleanupTokens(baseUrl: string): Promise<{ tokensRemoved: number }> {
+    if (!this.accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      const response = await this.makeAuthRequest<{
+        data: { tokensRemoved: number };
+      }>(baseUrl, "/auth/cleanup-tokens", "POST");
+
+      return response.data;
+    } catch (error) {
+      throw error instanceof Error
+        ? error
+        : new Error("Failed to cleanup tokens");
+    }
   }
 }

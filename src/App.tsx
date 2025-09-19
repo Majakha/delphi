@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Protocol } from "./types";
+import { FullProtocol, Protocol } from "./services/types";
 import ProtocolEditor from "./components/ProtocolEditor";
 import ProtocolOverview from "./components/ProtocolOverview";
 import Login from "./components/Login";
@@ -7,21 +7,25 @@ import Header from "./components/Header";
 import ProtocolSelector from "./components/ProtocolSelector";
 import { AlertCircle, X } from "lucide-react";
 import { useProtocol, useAuth } from "./hooks/useDataProvider";
-
+import { ServiceProvider } from "./services/ServiceProvider";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
+
+// Local type definition
+interface ValidationAlert {
+  show: boolean;
+  message: string;
+  missingItems: {
+    type: "task" | "protocol";
+    id: string;
+    title: string;
+  }[];
+}
 
 const AppContent: React.FC = () => {
   const [currentProtocol, setCurrentProtocol] = useState<Protocol | null>(null);
   const [showProtocolSelector, setShowProtocolSelector] = useState(false);
-  const [validationAlert, setValidationAlert] = useState<{
-    show: boolean;
-    message: string;
-    missingItems: {
-      type: "section" | "subsection";
-      id: string;
-      title: string;
-    }[];
-  }>({
+  const [validationAlert, setValidationAlert] = useState<ValidationAlert>({
     show: false,
     message: "",
     missingItems: [],
@@ -31,11 +35,17 @@ const AppContent: React.FC = () => {
   const {
     protocol: loadedProtocol,
     updateProtocol,
+    deleteProtocol,
+    addTask,
+    removeTask,
+    reorderTasks,
+    updateTaskOrder,
     loading: protocolLoading,
     error: protocolError,
-  } = useProtocol(currentProtocol?.id || "");
+    forceSync,
+  } = useProtocol(currentProtocol?.id || "", true); // Load full protocol with tasks
 
-  const [protocol, setProtocol] = useState<Protocol | null>(null);
+  const [protocol, setProtocol] = useState<FullProtocol | null>(null);
   const [hasError, setHasError] = useState(false);
 
   // Show protocol selector when no protocol is selected
@@ -47,26 +57,17 @@ const AppContent: React.FC = () => {
 
   // Update local state when protocol is loaded
   useEffect(() => {
-    if (loadedProtocol && loadedProtocol.sections && currentProtocol) {
-      // Ensure sections and subsections have enabled property for backward compatibility
-      const sectionsWithEnabled = loadedProtocol.sections.map(
-        (section: any) => ({
-          ...section,
-          enabled: section.enabled !== undefined ? section.enabled : true,
-          subsections:
-            section.subsections?.map((sub: any) => ({
-              ...sub,
-              enabled: sub.enabled !== undefined ? sub.enabled : true,
-            })) || [],
-        }),
+    if (loadedProtocol && currentProtocol) {
+      const fullProtocol = loadedProtocol as FullProtocol;
+
+      // Ensure tasks are sorted by order_index
+      const sortedTasks = [...(fullProtocol.tasks || [])].sort(
+        (a, b) => a.order_index - b.order_index,
       );
 
       setProtocol({
-        ...loadedProtocol,
-        sections: sectionsWithEnabled,
-        type: loadedProtocol.type || "in-lab",
-        createdAt: new Date(loadedProtocol.createdAt),
-        updatedAt: new Date(loadedProtocol.updatedAt),
+        ...fullProtocol,
+        tasks: sortedTasks,
       });
     }
   }, [loadedProtocol, currentProtocol]);
@@ -80,44 +81,125 @@ const AppContent: React.FC = () => {
 
   const handleProtocolSelect = (selectedProtocol: Protocol) => {
     setCurrentProtocol(selectedProtocol);
-    setProtocol(selectedProtocol);
     setShowProtocolSelector(false);
-    setHasError(false);
   };
 
-  const handleProtocolChange = (updatedProtocol: Protocol) => {
+  const handleProtocolChange = async (updatedProtocol: FullProtocol) => {
     try {
-      const protocolWithUpdatedTime = {
-        ...updatedProtocol,
-        updatedAt: new Date(),
-      };
+      setProtocol(updatedProtocol);
 
-      setProtocol(protocolWithUpdatedTime);
-
-      // Save to DataProvider (convert to Partial<Protocol> for updateProtocol)
+      // Save to DataProvider
       if (currentProtocol) {
-        const partialUpdate: Partial<Protocol> = {
-          ...protocolWithUpdatedTime,
-          createdAt: protocolWithUpdatedTime.createdAt,
-          updatedAt: protocolWithUpdatedTime.updatedAt,
-        };
-        updateProtocol(partialUpdate);
+        await updateProtocol({
+          name: updatedProtocol.name,
+          description: updatedProtocol.description || undefined,
+          is_template: updatedProtocol.is_template,
+        });
       }
-      setHasError(false); // Reset error state on successful update
+      setHasError(false);
     } catch (error) {
       console.error("Error updating protocol:", error);
       setHasError(true);
     }
   };
 
+  const handleTaskAdd = async (taskId: string, orderIndex?: number) => {
+    if (!currentProtocol || !protocol) return;
+
+    try {
+      await addTask(taskId, {
+        order_index: orderIndex ?? protocol.tasks.length,
+        importance_rating: 5,
+        notes: undefined,
+        copy_defaults: true,
+      });
+    } catch (error) {
+      console.error("Error adding task:", error);
+      setHasError(true);
+    }
+  };
+
+  const handleTaskRemove = async (taskId: string) => {
+    if (!currentProtocol) return;
+
+    try {
+      await removeTask(taskId);
+    } catch (error) {
+      console.error("Error removing task:", error);
+      setHasError(true);
+    }
+  };
+
+  const handleTaskReorder = async (taskId: string, newIndex: number) => {
+    if (!protocol) return;
+
+    try {
+      // Update local state immediately for better UX
+      const updatedTasks = [...protocol.tasks];
+      const taskIndex = updatedTasks.findIndex((t) => t.task_id === taskId);
+
+      if (taskIndex !== -1) {
+        const [movedTask] = updatedTasks.splice(taskIndex, 1);
+        updatedTasks.splice(newIndex, 0, movedTask);
+
+        // Update order indices
+        const taskOrders = updatedTasks.map((task: any, index: number) => ({
+          task_id: task.task_id,
+          order_index: index,
+        }));
+
+        // Update local state
+        updatedTasks.forEach((task: any, index: number) => {
+          task.order_index = index;
+        });
+
+        setProtocol({
+          ...protocol,
+          tasks: updatedTasks,
+        });
+
+        // Sync changes to server using the new reorderTasks method
+        await reorderTasks(taskOrders);
+      }
+    } catch (error) {
+      console.error("Error reordering task:", error);
+      setHasError(true);
+
+      // Revert local changes on error
+      if (loadedProtocol) {
+        setProtocol(loadedProtocol as FullProtocol);
+      }
+    }
+  };
+
   const handleSwitchProtocol = () => {
     setShowProtocolSelector(true);
+    setCurrentProtocol(null);
+    setProtocol(null);
   };
 
   const handleCreateNewProtocol = () => {
     setCurrentProtocol(null);
     setProtocol(null);
     setShowProtocolSelector(true);
+  };
+
+  const handleDeleteProtocol = async () => {
+    if (!currentProtocol) return;
+
+    if (
+      window.confirm(
+        `Are you sure you want to delete "${currentProtocol.name}"? This cannot be undone.`,
+      )
+    ) {
+      try {
+        await deleteProtocol();
+        handleCreateNewProtocol();
+      } catch (error) {
+        console.error("Error deleting protocol:", error);
+        setHasError(true);
+      }
+    }
   };
 
   // Show protocol selector
@@ -159,7 +241,7 @@ const AppContent: React.FC = () => {
             Something went wrong
           </h2>
           <p className="text-gray-600 mb-4">
-            There was an error loading your protocol data.
+            {protocolError || "There was an error loading your protocol data."}
           </p>
           <div className="space-y-2">
             <button
@@ -186,20 +268,26 @@ const AppContent: React.FC = () => {
     );
   }
 
+  // Calculate protocol stats
+  const enabledTasks = protocol.tasks.filter((task) => task.type === "task");
+  const totalTime = protocol.tasks.reduce(
+    (sum: number, task: any) => sum + (task.time || 0),
+    0,
+  );
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
       <Header
         protocol={protocol}
         onProtocolChange={handleProtocolChange}
         protocolName={protocol.name}
-        lastUpdated={protocol.updatedAt}
-        enabledSections={protocol.sections.filter((s) => s.enabled).length}
-        totalSections={protocol.sections.length}
-        enabledTotalTime={protocol.sections
-          .filter((s) => s.enabled)
-          .reduce((total, section) => total + section.time, 0)}
+        lastUpdated={new Date(protocol.updated_at)}
+        enabledTasks={enabledTasks.length}
+        totalTasks={protocol.tasks.length}
+        enabledTotalTime={totalTime}
         onSwitchProtocol={handleSwitchProtocol}
         onCreateNewProtocol={handleCreateNewProtocol}
+        onDeleteProtocol={handleDeleteProtocol}
       />
       <div className="bg-white shadow-sm"></div>
 
@@ -208,6 +296,9 @@ const AppContent: React.FC = () => {
           <ProtocolEditor
             protocol={protocol}
             onProtocolChange={handleProtocolChange}
+            onTaskAdd={handleTaskAdd}
+            onTaskRemove={handleTaskRemove}
+            onTaskReorder={handleTaskReorder}
           />
         </div>
         <div className="w-2/5 overflow-y-auto">
@@ -238,20 +329,20 @@ const AppContent: React.FC = () => {
             <p className="text-gray-600 mb-4">{validationAlert.message}</p>
             <div className="flex-1 overflow-y-auto border rounded-md p-2 mb-2">
               <ul className="divide-y divide-gray-200">
-                {validationAlert.missingItems.map((item) => (
+                {validationAlert.missingItems.map((item: any) => (
                   <li key={item.id} className="py-2">
                     <div className="flex items-center">
                       <span className="inline-block px-2 py-1 text-xs font-medium rounded-full mr-2 bg-blue-100 text-blue-800">
-                        {item.type === "section" ? "Section" : "Subsection"}
+                        {item.type === "task" ? "Task" : "Protocol"}
                       </span>
                       <button
                         onClick={() => {
-                          // Find the section element and scroll to it
-                          const sectionElement = document.querySelector(
-                            `[data-section-id="${item.type === "section" ? item.id : ""}"]`,
+                          // Find the task element and scroll to it
+                          const taskElement = document.querySelector(
+                            `[data-task-id="${item.id}"]`,
                           );
-                          if (sectionElement) {
-                            sectionElement.scrollIntoView({
+                          if (taskElement) {
+                            taskElement.scrollIntoView({
                               behavior: "smooth",
                               block: "start",
                             });
@@ -288,7 +379,34 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  // Handle authentication at the top level
+  return (
+    <ErrorBoundary
+      onError={(error, errorInfo) => {
+        console.error("App Error Boundary:", error, errorInfo);
+        // TODO: Send to error reporting service in production
+      }}
+    >
+      <ServiceProvider
+        apiBaseUrl={process.env.REACT_APP_API_URL || "http://localhost:3001"}
+        cacheConfig={{ maxSize: 200, defaultTtl: 30 * 60 * 1000 }}
+        onServiceEvent={(type, data) => {
+          console.log("Service event:", type, data);
+        }}
+        onInitialized={(services) => {
+          console.log("Services initialized:", services);
+        }}
+        onError={(error) => {
+          console.error("Service initialization error:", error);
+        }}
+      >
+        <AuthenticatedApp />
+      </ServiceProvider>
+    </ErrorBoundary>
+  );
+};
+
+const AuthenticatedApp: React.FC = () => {
+  // Handle authentication at the app level
   const { isAuthenticated, error: authError, loading: authLoading } = useAuth();
 
   // Show loading while checking authentication
@@ -309,7 +427,15 @@ const App: React.FC = () => {
   }
 
   // Show the main app content
-  return <AppContent />;
+  return (
+    <ErrorBoundary
+      onError={(error, errorInfo) => {
+        console.error("Protocol Editor Error:", error, errorInfo);
+      }}
+    >
+      <AppContent />
+    </ErrorBoundary>
+  );
 };
 
 export default App;

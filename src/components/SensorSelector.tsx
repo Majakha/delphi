@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { X, Settings, ChevronRight, Plus } from "lucide-react";
-import { Sensor } from "../types";
+import { X, Settings, Plus } from "lucide-react";
+import { Sensor } from "../services/types";
 import { getSortedSensorsByCategory, predefinedSensors } from "../data/sensors";
 import Popup from "./Popup";
 import AddSensorPopup from "./AddSensorPopup";
@@ -56,11 +56,8 @@ const SensorSelector: React.FC<SensorSelectorProps> = ({
     try {
       const newSensor = await dataProvider.createSensor({
         name: sensorData.name,
-        description: "",
-        type: "custom",
+        description: sensorData.description || "",
         category: sensorData.category || "Custom",
-        tags: [],
-        isShared: true,
       });
 
       // Add to local sensors list
@@ -177,9 +174,9 @@ const SensorSelector: React.FC<SensorSelectorProps> = ({
                       />
                       <div className="flex-1">
                         <span className="text-sm">{sensor.name}</span>
-                        {sensor.isShared && (
+                        {!sensor.is_custom && (
                           <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                            Shared
+                            Built-in
                           </span>
                         )}
                       </div>

@@ -1,24 +1,41 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { dataProvider } from "../services/DataProvider";
 import {
   Protocol,
-  StoredProtocol,
+  FullProtocol,
+  Task,
+  TaskWithRelations,
+  Domain,
   Sensor,
   User,
   NotificationType,
   CreateProtocolData,
+  UpdateProtocolData,
+  CreateTaskData,
+  UpdateTaskData,
+  CreateDomainData,
+  UpdateDomainData,
   CreateSensorData,
-  CreateSectionData,
+  UpdateSensorData,
+  AddTaskToProtocolData,
+  RegisterData,
+  LoginData,
+  ChangePasswordData,
   DataProviderStatus,
   Notification,
-  SharedSection,
+  TaskFilters,
+  SensorFilters,
+  DomainFilters,
+  ProtocolFilters,
 } from "../services/types";
 
 /**
  * Hook for managing protocol data with automatic syncing
  */
-export const useProtocol = (protocolId: string) => {
-  const [protocol, setProtocol] = useState<StoredProtocol | null>(null);
+export const useProtocol = (protocolId: string, loadFull: boolean = false) => {
+  const [protocol, setProtocol] = useState<FullProtocol | Protocol | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<"synced" | "pending" | "error">(
@@ -34,9 +51,12 @@ export const useProtocol = (protocolId: string) => {
       try {
         setLoading(true);
         setError(null);
-        const protocolData = await dataProvider.loadProtocol(protocolId);
+        const protocolData = await dataProvider.getProtocol(
+          protocolId,
+          loadFull,
+        );
         setProtocol(protocolData);
-        setSyncStatus(protocolData.syncStatus);
+        setSyncStatus("synced");
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to load protocol",
@@ -47,21 +67,21 @@ export const useProtocol = (protocolId: string) => {
     };
 
     loadProtocol();
-  }, [protocolId]);
+  }, [protocolId, loadFull]);
 
   // Listen for data provider notifications
   useEffect(() => {
     const unsubscribe = dataProvider.subscribe(
       (type: NotificationType, data: any) => {
         switch (type) {
-          case "saved_locally":
-            if (data.id === protocolId) {
+          case "saving":
+            if (data.type === "protocol" && data.id === protocolId) {
               setSyncStatus("pending");
-              setLastSaved(new Date());
             }
             break;
           case "synced":
             setSyncStatus("synced");
+            setLastSaved(new Date());
             break;
           case "sync_failed":
             setSyncStatus("error");
@@ -69,6 +89,18 @@ export const useProtocol = (protocolId: string) => {
           case "protocol_updated":
             if (data.id === protocolId) {
               setProtocol(data);
+            }
+            break;
+          case "updated":
+            if (data.type === "protocol" && data.id === protocolId) {
+              setProtocol(data.data);
+              setSyncStatus("synced");
+            }
+            break;
+          case "task_reordered":
+          case "tasks_reordered":
+            if (data.protocolId === protocolId) {
+              setSyncStatus("synced");
             }
             break;
         }
@@ -80,20 +112,113 @@ export const useProtocol = (protocolId: string) => {
 
   // Update protocol function
   const updateProtocol = useCallback(
-    async (updates: Partial<Protocol>) => {
+    async (updates: UpdateProtocolData) => {
       if (!protocol) return;
 
-      const updatedProtocol = { ...protocol, ...updates };
-      setProtocol(updatedProtocol);
-
       try {
-        await dataProvider.saveProtocol(updatedProtocol);
+        const updatedProtocol = await dataProvider.updateProtocol(
+          protocol.id,
+          updates,
+        );
+        setProtocol(updatedProtocol);
+        return updatedProtocol;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to save protocol",
+          err instanceof Error ? err.message : "Failed to update protocol",
         );
-        // Revert optimistic update on error
-        setProtocol(protocol);
+        throw err;
+      }
+    },
+    [protocol],
+  );
+
+  // Delete protocol function
+  const deleteProtocol = useCallback(async () => {
+    if (!protocol) return;
+
+    try {
+      await dataProvider.deleteProtocol(protocol.id);
+      setProtocol(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete protocol",
+      );
+      throw err;
+    }
+  }, [protocol]);
+
+  // Add task to protocol
+  const addTask = useCallback(
+    async (taskId: string, taskData?: AddTaskToProtocolData) => {
+      if (!protocol) return;
+
+      try {
+        const result = await dataProvider.addTaskToProtocol(
+          protocol.id,
+          taskId,
+          taskData,
+        );
+        return result;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to add task to protocol",
+        );
+        throw err;
+      }
+    },
+    [protocol],
+  );
+
+  // Remove task from protocol
+  const removeTask = useCallback(
+    async (taskId: string) => {
+      if (!protocol) return;
+
+      try {
+        await dataProvider.removeTaskFromProtocol(protocol.id, taskId);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to remove task from protocol",
+        );
+        throw err;
+      }
+    },
+    [protocol],
+  );
+
+  // Reorder tasks in protocol
+  const reorderTasks = useCallback(
+    async (taskOrders: { task_id: string; order_index: number }[]) => {
+      if (!protocol) return;
+
+      try {
+        await dataProvider.reorderProtocolTasks(protocol.id, taskOrders);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to reorder protocol tasks",
+        );
+        throw err;
+      }
+    },
+    [protocol],
+  );
+
+  // Update single task order
+  const updateTaskOrder = useCallback(
+    async (taskId: string, orderIndex: number) => {
+      if (!protocol) return;
+
+      try {
+        await dataProvider.updateTaskOrder(protocol.id, taskId, orderIndex);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update task order",
+        );
+        throw err;
       }
     },
     [protocol],
@@ -117,36 +242,323 @@ export const useProtocol = (protocolId: string) => {
     syncStatus,
     lastSaved,
     updateProtocol,
+    deleteProtocol,
+    addTask,
+    removeTask,
+    reorderTasks,
+    updateTaskOrder,
     forceSync,
   };
 };
 
 /**
- * Hook for managing sensors data with on-demand fetching
+ * Hook for managing protocols list
  */
-export const useSensors = () => {
-  const [sensors, setSensors] = useState<Sensor[]>([]);
+export const useProtocols = (filters: ProtocolFilters = {}) => {
+  const [protocols, setProtocols] = useState<Protocol[] | FullProtocol[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cacheInfo, setCacheInfo] = useState<{
-    timestamp: string;
-    age: number;
-    size: number;
-  } | null>(null);
 
-  // Load sensors function
-  const loadSensors = useCallback(async (forceRefresh: boolean = false) => {
+  // Create stable filter key to prevent infinite re-renders
+  const filterKey = useMemo(() => JSON.stringify(filters), [filters]);
+
+  // Load protocols function
+  const loadProtocols = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const sensorsData = await dataProvider.getSensors(forceRefresh);
-      setSensors(sensorsData);
+      const protocolsData = await dataProvider.getProtocols(filters);
+      setProtocols(protocolsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load protocols");
+    } finally {
+      setLoading(false);
+    }
+  }, [filterKey]);
 
-      // Update cache info
-      const info = dataProvider.getCacheInfo("sensors");
-      setCacheInfo(info);
+  // Create new protocol
+  const createProtocol = useCallback(
+    async (protocolData: CreateProtocolData): Promise<Protocol> => {
+      try {
+        const newProtocol = await dataProvider.createProtocol(protocolData);
+        setProtocols((prev) => [...prev, newProtocol]);
+        return newProtocol;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create protocol",
+        );
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Load protocols on mount and when filter changes
+  useEffect(() => {
+    loadProtocols();
+  }, [filterKey]);
+
+  return {
+    protocols,
+    loading,
+    error,
+    loadProtocols,
+    createProtocol,
+  };
+};
+
+/**
+ * Hook for managing tasks data
+ */
+export const useTasks = (filters: TaskFilters = {}) => {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load tasks function
+  const loadTasks = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const tasksData = await dataProvider.getTasks(filters);
+      setTasks(tasksData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load tasks");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  // Search tasks function
+  const searchTasks = useCallback(async (searchTerm: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const tasksData = await dataProvider.searchTasks(searchTerm);
+      setTasks(tasksData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to search tasks");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Create new task
+  const createTask = useCallback(
+    async (taskData: CreateTaskData): Promise<Task> => {
+      try {
+        const newTask = await dataProvider.createTask(taskData);
+        setTasks((prev) => [...prev, newTask]);
+        return newTask;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to create task");
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Update task
+  const updateTask = useCallback(
+    async (taskId: string, updates: UpdateTaskData): Promise<Task> => {
+      try {
+        const updatedTask = await dataProvider.updateTask(taskId, updates);
+        setTasks((prev) =>
+          prev.map((task) => (task.id === taskId ? updatedTask : task)),
+        );
+        return updatedTask;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update task");
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Delete task
+  const deleteTask = useCallback(async (taskId: string) => {
+    try {
+      await dataProvider.deleteTask(taskId);
+      setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete task");
+      throw err;
+    }
+  }, []);
+
+  // Load tasks on mount
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+
+  return {
+    tasks,
+    loading,
+    error,
+    loadTasks,
+    searchTasks,
+    createTask,
+    updateTask,
+    deleteTask,
+  };
+};
+
+/**
+ * Hook for managing a single task with relationships
+ */
+export const useTask = (taskId: string, withRelations: boolean = false) => {
+  const [task, setTask] = useState<TaskWithRelations | Task | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load task on mount
+  useEffect(() => {
+    if (!taskId) return;
+
+    const loadTask = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const taskData = await dataProvider.getTask(taskId, withRelations);
+        setTask(taskData);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load task");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTask();
+  }, [taskId, withRelations]);
+
+  return {
+    task,
+    loading,
+    error,
+  };
+};
+
+/**
+ * Hook for managing domains data
+ */
+export const useDomains = (filters: DomainFilters = {}) => {
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load domains function
+  const loadDomains = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const domainsData = await dataProvider.getDomains(filters);
+      setDomains(domainsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load domains");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  // Create new domain
+  const createDomain = useCallback(
+    async (domainData: CreateDomainData): Promise<Domain> => {
+      try {
+        const newDomain = await dataProvider.createDomain(domainData);
+        setDomains((prev) => [...prev, newDomain]);
+        return newDomain;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create domain",
+        );
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Update domain
+  const updateDomain = useCallback(
+    async (domainId: string, updates: UpdateDomainData): Promise<Domain> => {
+      try {
+        const updatedDomain = await dataProvider.updateDomain(
+          domainId,
+          updates,
+        );
+        setDomains((prev) =>
+          prev.map((domain) =>
+            domain.id === domainId ? updatedDomain : domain,
+          ),
+        );
+        return updatedDomain;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update domain",
+        );
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Delete domain
+  const deleteDomain = useCallback(async (domainId: string) => {
+    try {
+      await dataProvider.deleteDomain(domainId);
+      setDomains((prev) => prev.filter((domain) => domain.id !== domainId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete domain");
+      throw err;
+    }
+  }, []);
+
+  // Load domains on mount
+  useEffect(() => {
+    loadDomains();
+  }, [loadDomains]);
+
+  return {
+    domains,
+    loading,
+    error,
+    loadDomains,
+    createDomain,
+    updateDomain,
+    deleteDomain,
+  };
+};
+
+/**
+ * Hook for managing sensors data
+ */
+export const useSensors = (filters: SensorFilters = {}) => {
+  const [sensors, setSensors] = useState<Sensor[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load sensors function
+  const loadSensors = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const sensorsData = await dataProvider.getSensors(filters);
+      setSensors(sensorsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sensors");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  // Search sensors function
+  const searchSensors = useCallback(async (searchTerm: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const sensorsData = await dataProvider.searchSensors(searchTerm);
+      setSensors(sensorsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to search sensors");
     } finally {
       setLoading(false);
     }
@@ -156,7 +568,6 @@ export const useSensors = () => {
   const createSensor = useCallback(
     async (sensorData: CreateSensorData): Promise<Sensor> => {
       try {
-        setLoading(true);
         const newSensor = await dataProvider.createSensor(sensorData);
         setSensors((prev) => [...prev, newSensor]);
         return newSensor;
@@ -165,126 +576,60 @@ export const useSensors = () => {
           err instanceof Error ? err.message : "Failed to create sensor",
         );
         throw err;
-      } finally {
-        setLoading(false);
       }
     },
     [],
   );
 
-  // Refresh sensors
-  const refreshSensors = useCallback(() => {
-    loadSensors(true);
+  // Update sensor
+  const updateSensor = useCallback(
+    async (sensorId: string, updates: UpdateSensorData): Promise<Sensor> => {
+      try {
+        const updatedSensor = await dataProvider.updateSensor(
+          sensorId,
+          updates,
+        );
+        setSensors((prev) =>
+          prev.map((sensor) =>
+            sensor.id === sensorId ? updatedSensor : sensor,
+          ),
+        );
+        return updatedSensor;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update sensor",
+        );
+        throw err;
+      }
+    },
+    [],
+  );
+
+  // Delete sensor
+  const deleteSensor = useCallback(async (sensorId: string) => {
+    try {
+      await dataProvider.deleteSensor(sensorId);
+      setSensors((prev) => prev.filter((sensor) => sensor.id !== sensorId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete sensor");
+      throw err;
+    }
+  }, []);
+
+  // Load sensors on mount
+  useEffect(() => {
+    loadSensors();
   }, [loadSensors]);
 
   return {
     sensors,
     loading,
     error,
-    cacheInfo,
     loadSensors,
-    refreshSensors,
+    searchSensors,
     createSensor,
-  };
-};
-
-/**
- * Hook for managing sections data with on-demand fetching
- */
-export const useSections = () => {
-  const [sections, setSections] = useState<SharedSection[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [cacheInfo, setCacheInfo] = useState<{
-    timestamp: string;
-    age: number;
-    size: number;
-  } | null>(null);
-
-  // Load sections function
-  const loadSections = useCallback(async (forceRefresh: boolean = false) => {
-    try {
-      setLoading(true);
-      setError(null);
-      const sectionsData = await dataProvider.getSections(forceRefresh);
-      setSections(sectionsData);
-
-      // Update cache info
-      const info = dataProvider.getCacheInfo("sections");
-      setCacheInfo(info);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sections");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Create new section
-  const createSection = useCallback(
-    async (sectionData: CreateSectionData): Promise<SharedSection> => {
-      try {
-        setLoading(true);
-        const newSection = await dataProvider.createSection(sectionData);
-        setSections((prev) => [...prev, newSection]);
-        return newSection;
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to create section",
-        );
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
-
-  // Refresh sections
-  const refreshSections = useCallback(() => {
-    loadSections(true);
-  }, [loadSections]);
-
-  return {
-    sections,
-    loading,
-    error,
-    cacheInfo,
-    loadSections,
-    refreshSections,
-    createSection,
-  };
-};
-
-/**
- * Hook for creating new protocols
- */
-export const useProtocolCreation = () => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const createProtocol = useCallback(
-    async (protocolData: CreateProtocolData): Promise<Protocol> => {
-      try {
-        setLoading(true);
-        setError(null);
-        const newProtocol = await dataProvider.createProtocol(protocolData);
-        return newProtocol;
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to create protocol",
-        );
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
-
-  return {
-    createProtocol,
-    loading,
-    error,
+    updateSensor,
+    deleteSensor,
   };
 };
 
@@ -368,8 +713,8 @@ export const useCache = () => {
     dataProvider.clearCache(key);
   }, []);
 
-  const getCacheInfo = useCallback((key: string) => {
-    return dataProvider.getCacheInfo(key);
+  const getCacheInfo = useCallback(() => {
+    return dataProvider.getCacheInfo();
   }, []);
 
   return {
@@ -429,6 +774,10 @@ export const useAuth = () => {
             setIsAuthenticated(true);
             setError(null);
             break;
+          case "registered":
+            // Registration successful, but user still needs to log in
+            setError(null);
+            break;
           case "logged_out":
             setUser(null);
             setIsAuthenticated(false);
@@ -444,7 +793,8 @@ export const useAuth = () => {
             // If it's a critical auth error, clear auth state
             if (
               data.error?.includes("expired") ||
-              data.error?.includes("invalid")
+              data.error?.includes("invalid") ||
+              data.error?.includes("unauthorized")
             ) {
               setUser(null);
               setIsAuthenticated(false);
@@ -463,12 +813,32 @@ export const useAuth = () => {
     return unsubscribe;
   }, []);
 
+  // Register function
+  const register = useCallback(
+    async (registerData: RegisterData): Promise<User> => {
+      try {
+        setLoading(true);
+        setError(null);
+        const userData = await dataProvider.register(registerData);
+        return userData;
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : "Registration failed";
+        setError(errorMessage);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
   // Login function
-  const login = useCallback(async (password: string): Promise<User> => {
+  const login = useCallback(async (loginData: LoginData): Promise<User> => {
     try {
       setLoading(true);
       setError(null);
-      const userData = await dataProvider.login(password);
+      const userData = await dataProvider.login(loginData);
       return userData;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Login failed";
@@ -500,6 +870,26 @@ export const useAuth = () => {
     }
   }, []);
 
+  // Change password function
+  const changePassword = useCallback(
+    async (passwordData: ChangePasswordData): Promise<void> => {
+      try {
+        setLoading(true);
+        setError(null);
+        await dataProvider.changePassword(passwordData);
+        // User will be logged out and need to log in again
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : "Password change failed";
+        setError(errorMessage);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
   // Clear error function
   const clearError = useCallback(() => {
     setError(null);
@@ -510,8 +900,10 @@ export const useAuth = () => {
     isAuthenticated,
     loading,
     error,
+    register,
     login,
     logout,
+    changePassword,
     clearError,
   };
 };

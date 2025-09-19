@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import Popup from "./Popup";
-import { Sensor } from "../types";
+import { Sensor } from "../services/types";
 import { predefinedSensors } from "../data/sensors";
 import { dataProvider } from "../services/DataProvider";
 
@@ -103,12 +103,11 @@ const AddSensorPopup: React.FC<AddSensorPopupProps> = ({
     const newSensor: Omit<Sensor, "id"> = {
       name: name.trim(),
       description: "",
-      type: "custom",
       category: categoryValue || "Other",
-      tags: [],
-      isShared: true,
-      createdBy: "",
-      createdAt: new Date().toISOString(),
+      is_custom: true,
+      created_by: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     onSave(newSensor);

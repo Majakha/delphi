@@ -1,44 +1,193 @@
 const express = require("express");
 const router = express.Router();
+const bcrypt = require("bcryptjs");
 const {
-  executeAuthQuery,
-  executeAuthQueryOne,
-  executeAuthInsert,
-  executeAuthUpdate,
+  executeAuthQueryObj,
+  executeAuthQueryOneObj,
+  executeAuthInsertObj,
+  executeAuthUpdateObj,
+  executeAuthTransactionObjs,
   requireAuth,
+  getUserContext,
+  generateUUID,
 } = require("../authDB.js");
-const {
-  getAllProtocols,
-  getProtocolById,
-  getProtocolsByUser,
-  getProtocolByName,
-  createProtocol,
-  updateProtocol,
-  deleteProtocol,
-  searchProtocols,
-  getProtocolSections,
-  addSectionToProtocol,
-  removeSectionFromProtocol,
-  removeAllSectionsFromProtocol,
-  updateSectionOrder,
-  getFullProtocol,
-} = require("../queries.js");
+const DatabaseQueries = require("../queries.js");
 const { asyncHandler } = require("../middleware/errorHandler.js");
 const {
   ValidationError,
   NotFoundError,
   ConflictError,
   DatabaseError,
+  AuthorizationError,
 } = require("../errors/CustomErrors.js");
 
-// Get all protocols
+// Helper function to build full protocol with tasks
+async function buildFullProtocol(protocols, token) {
+  if (!protocols.length) return [];
+
+  const fullProtocols = [];
+
+  for (const protocol of protocols) {
+    try {
+      const result = await executeAuthQueryObj(
+        DatabaseQueries.protocols.getFull(protocol.id),
+        token,
+      );
+
+      if (result.length === 0) {
+        // Protocol exists but has no tasks
+        fullProtocols.push({
+          ...protocol,
+          tasks: [],
+        });
+        continue;
+      }
+
+      // Structure the nested data
+      const fullProtocol = {
+        id: result[0].protocol_id,
+        name: result[0].protocol_name,
+        description: result[0].protocol_description,
+        is_template: result[0].is_template,
+        template_protocol_id: result[0].template_protocol_id,
+        created_by: result[0].created_by,
+        created_at: result[0].created_at,
+        updated_at: result[0].updated_at,
+        tasks: [],
+      };
+
+      // Group tasks and their relationships
+      const tasksMap = new Map();
+
+      result.forEach((row) => {
+        if (row.protocol_task_id) {
+          if (!tasksMap.has(row.protocol_task_id)) {
+            // Build final task properties using overrides if available
+            const finalTitle = row.override_title || row.title;
+            const finalTime =
+              row.override_time !== null ? row.override_time : row.time;
+            const finalDescription =
+              row.override_description || row.description;
+            const finalAdditionalNotes =
+              row.override_additional_notes || row.additional_notes;
+
+            tasksMap.set(row.protocol_task_id, {
+              protocol_task_id: row.protocol_task_id,
+              task_id: row.task_id,
+              order_index: row.order_index,
+              importance_rating: row.importance_rating,
+              notes: row.notes,
+              // Final computed values (with overrides applied)
+              title: finalTitle,
+              time: finalTime,
+              description: finalDescription,
+              additional_notes: finalAdditionalNotes,
+              type: row.type,
+              rating: row.rating,
+              // Override tracking
+              has_title_override: row.override_title !== null,
+              has_time_override: row.override_time !== null,
+              has_description_override: row.override_description !== null,
+              has_notes_override: row.override_additional_notes !== null,
+              sensors: [],
+              domains: [],
+            });
+          }
+
+          const task = tasksMap.get(row.protocol_task_id);
+
+          // Add sensors (avoid duplicates)
+          if (row.sensor_ids) {
+            const sensorIds = row.sensor_ids.split(",");
+            const sensorNames = row.sensor_names.split(",");
+            const sensorCategories = row.sensor_categories
+              ? row.sensor_categories.split(",")
+              : [];
+            const sensorDescriptions = row.sensor_descriptions
+              ? row.sensor_descriptions.split(",")
+              : [];
+
+            sensorIds.forEach((sensorId, index) => {
+              if (sensorId && !task.sensors.find((s) => s.id === sensorId)) {
+                task.sensors.push({
+                  id: sensorId,
+                  name: sensorNames[index] || sensorId,
+                  category: sensorCategories[index] || "Unknown",
+                  description: sensorDescriptions[index] || null,
+                  is_custom: false,
+                  created_by: null,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            });
+          }
+
+          // Add domains (avoid duplicates)
+          if (row.domain_ids) {
+            const domainIds = row.domain_ids.split(",");
+            const domainNames = row.domain_names.split(",");
+            const domainDescriptions = row.domain_descriptions
+              ? row.domain_descriptions.split(",")
+              : [];
+
+            domainIds.forEach((domainId, index) => {
+              if (domainId && !task.domains.find((d) => d.id === domainId)) {
+                task.domains.push({
+                  id: domainId,
+                  name: domainNames[index] || domainId,
+                  description: domainDescriptions[index] || null,
+                  is_custom: false,
+                  created_by: null,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            });
+          }
+        }
+      });
+
+      // Sort tasks by order and add to protocol
+      fullProtocol.tasks = Array.from(tasksMap.values()).sort(
+        (a, b) => a.order_index - b.order_index,
+      );
+
+      fullProtocols.push(fullProtocol);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  return fullProtocols;
+}
+
+// Get all protocols (admin only) or templates
 router.get(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const query = getAllProtocols();
-    const protocols = await executeAuthQuery(query, [], req.token);
-    res.list(protocols, "Protocols retrieved successfully");
+    const { templates_only = "false", full = "false" } = req.query;
+
+    let protocols;
+    if (templates_only === "true") {
+      protocols = await executeAuthQueryObj(
+        DatabaseQueries.protocols.getTemplates(),
+        req.token,
+      );
+    } else {
+      protocols = await executeAuthQueryObj(
+        DatabaseQueries.protocols.getAll(),
+        req.token,
+      );
+    }
+
+    if (full === "true") {
+      const fullProtocols = await buildFullProtocol(protocols, req.token);
+      res.list(fullProtocols, "Full protocols retrieved successfully");
+    } else {
+      res.list(protocols, "Protocols retrieved successfully");
+    }
   }),
 );
 
@@ -47,12 +196,19 @@ router.get(
   "/my",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { getUserContext } = require("../authDB.js");
+    const { full = "false" } = req.query;
     const userContext = getUserContext(req.token);
+    const protocols = await executeAuthQueryObj(
+      DatabaseQueries.protocols.getByUser(userContext.userId),
+      req.token,
+    );
 
-    const query = getProtocolsByUser(userContext.userId);
-    const protocols = await executeAuthQuery(query, [], req.token);
-    res.list(protocols, "User protocols retrieved successfully");
+    if (full === "true") {
+      const fullProtocols = await buildFullProtocol(protocols, req.token);
+      res.list(fullProtocols, "Full user protocols retrieved successfully");
+    } else {
+      res.list(protocols, "User protocols retrieved successfully");
+    }
   }),
 );
 
@@ -73,8 +229,10 @@ router.get(
       );
     }
 
-    const query = searchProtocols(term);
-    const protocols = await executeAuthQuery(query, [], req.token);
+    const protocols = await executeAuthQueryObj(
+      DatabaseQueries.protocols.search(term),
+      req.token,
+    );
     res.list(protocols, `Search results for '${term}' retrieved successfully`);
   }),
 );
@@ -90,8 +248,10 @@ router.get(
       throw new ValidationError("Protocol ID is required");
     }
 
-    const query = getProtocolById(id);
-    const protocol = await executeAuthQueryOne(query, [], req.token);
+    const protocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(id),
+      req.token,
+    );
 
     if (!protocol) {
       throw new NotFoundError("Protocol");
@@ -101,7 +261,7 @@ router.get(
   }),
 );
 
-// Get full protocol with sections and subsections
+// Get full protocol with tasks and their details
 router.get(
   "/:id/full",
   requireAuth,
@@ -112,8 +272,10 @@ router.get(
       throw new ValidationError("Protocol ID is required");
     }
 
-    const query = getFullProtocol(id);
-    const result = await executeAuthQuery(query, [], req.token);
+    const result = await executeAuthQueryObj(
+      DatabaseQueries.protocols.getFull(id),
+      req.token,
+    );
 
     if (result.length === 0) {
       throw new NotFoundError("Protocol");
@@ -123,59 +285,93 @@ router.get(
     const protocol = {
       id: result[0].protocol_id,
       name: result[0].protocol_name,
-      sections: [],
+      description: result[0].protocol_description,
+      tasks: [],
     };
 
-    // Group sections and subsections
-    const sectionsMap = new Map();
+    // Group tasks and their relationships
+    const tasksMap = new Map();
 
     result.forEach((row) => {
-      if (row.section_id) {
-        if (!sectionsMap.has(row.section_id)) {
-          sectionsMap.set(row.section_id, {
-            id: row.section_id,
-            title: row.section_title,
-            description: row.section_description,
-            order: row.section_order,
-            subsections: [],
+      if (row.protocol_task_id) {
+        if (!tasksMap.has(row.protocol_task_id)) {
+          // Build final task properties using overrides if available
+          const finalTitle = row.override_title || row.title;
+          const finalTime =
+            row.override_time !== null ? row.override_time : row.time;
+          const finalDescription = row.override_description || row.description;
+          const finalAdditionalNotes =
+            row.override_additional_notes || row.additional_notes;
+
+          tasksMap.set(row.protocol_task_id, {
+            protocol_task_id: row.protocol_task_id,
+            task_id: row.task_id,
+            order_index: row.order_index,
+            importance_rating: row.importance_rating,
+            notes: row.notes,
+            // Final computed values (with overrides applied)
+            title: finalTitle,
+            time: finalTime,
+            description: finalDescription,
+            additional_notes: finalAdditionalNotes,
+            type: row.type,
+            rating: row.rating,
+            // Override tracking
+            has_title_override: row.override_title !== null,
+            has_time_override: row.override_time !== null,
+            has_description_override: row.override_description !== null,
+            has_notes_override: row.override_additional_notes !== null,
+            sensors: [],
+            domains: [],
           });
         }
 
-        if (row.subsection_id) {
-          const section = sectionsMap.get(row.section_id);
-          const existingSubsection = section.subsections.find(
-            (sub) => sub.id === row.subsection_id,
-          );
+        const task = tasksMap.get(row.protocol_task_id);
 
-          if (!existingSubsection) {
-            section.subsections.push({
-              id: row.subsection_id,
-              title: row.subsection_title,
-              time: row.time,
-              rating: row.rating,
-              type: row.type,
-              order: row.subsection_order,
-            });
-          }
+        // Add sensors (avoid duplicates)
+        if (row.sensor_ids) {
+          const sensorIds = row.sensor_ids.split(",");
+          const sensorNames = row.sensor_names.split(",");
+
+          sensorIds.forEach((sensorId, index) => {
+            if (sensorId && !task.sensors.find((s) => s.id === sensorId)) {
+              task.sensors.push({
+                id: sensorId,
+                name: sensorNames[index] || sensorId,
+              });
+            }
+          });
+        }
+
+        // Add domains (avoid duplicates)
+        if (row.domain_ids) {
+          const domainIds = row.domain_ids.split(",");
+          const domainNames = row.domain_names.split(",");
+
+          domainIds.forEach((domainId, index) => {
+            if (domainId && !task.domains.find((d) => d.id === domainId)) {
+              task.domains.push({
+                id: domainId,
+                name: domainNames[index] || domainId,
+              });
+            }
+          });
         }
       }
     });
 
-    // Sort and add to protocol
-    protocol.sections = Array.from(sectionsMap.values())
-      .sort((a, b) => a.order - b.order)
-      .map((section) => ({
-        ...section,
-        subsections: section.subsections.sort((a, b) => a.order - b.order),
-      }));
+    // Sort tasks by order and add to protocol
+    protocol.tasks = Array.from(tasksMap.values()).sort(
+      (a, b) => a.order_index - b.order_index,
+    );
 
     res.success(protocol, "Full protocol retrieved successfully");
   }),
 );
 
-// Get protocol sections
+// Get protocol tasks
 router.get(
-  "/:id/sections",
+  "/:id/tasks",
   requireAuth,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -184,9 +380,11 @@ router.get(
       throw new ValidationError("Protocol ID is required");
     }
 
-    const query = getProtocolSections(id);
-    const sections = await executeAuthQuery(query, [], req.token);
-    res.list(sections, "Protocol sections retrieved successfully");
+    const tasks = await executeAuthQueryObj(
+      DatabaseQueries.protocolTasks.getByProtocol(id),
+      req.token,
+    );
+    res.list(tasks, "Protocol tasks retrieved successfully");
   }),
 );
 
@@ -195,7 +393,13 @@ router.post(
   "/",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { name } = req.body;
+    const {
+      name,
+      description,
+      is_template = false,
+      template_protocol_id,
+    } = req.body;
+    const userContext = getUserContext(req.token);
 
     // Validation
     const errors = [];
@@ -218,17 +422,22 @@ router.post(
         message: "Protocol name must be less than 100 characters",
       });
     }
+    if (description && description.length > 500) {
+      errors.push({
+        field: "description",
+        message: "Description must be less than 500 characters",
+      });
+    }
 
     if (errors.length > 0) {
       throw new ValidationError("Protocol validation failed", { errors });
     }
 
-    const { getUserContext } = require("../authDB.js");
-    const userContext = getUserContext(req.token);
-
     // Check if protocol with same name already exists for user
-    const existingQuery = getProtocolByName(name.trim(), userContext.userId);
-    const existing = await executeAuthQueryOne(existingQuery, [], req.token);
+    const existing = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getByName(name.trim(), userContext.userId),
+      req.token,
+    );
 
     if (existing) {
       throw new ConflictError("Protocol with this name already exists", {
@@ -238,11 +447,25 @@ router.post(
       });
     }
 
-    const query = createProtocol(name.trim(), userContext.userId);
+    const protocolId = generateUUID();
 
-    let protocolId;
     try {
-      protocolId = await executeAuthInsert(query, [], req.token);
+      await executeAuthInsertObj(
+        DatabaseQueries.protocols.create(
+          protocolId,
+          name.trim(),
+          description?.trim() || null,
+          is_template,
+          template_protocol_id || null,
+          userContext.userId,
+        ),
+        req.token,
+      );
+
+      // If creating from template, copy tasks
+      if (template_protocol_id) {
+        await copyProtocolTasks(template_protocol_id, protocolId, req.token);
+      }
     } catch (error) {
       if (error.code === "ER_DUP_ENTRY") {
         throw new ConflictError("Protocol with this name already exists", {
@@ -254,14 +477,57 @@ router.post(
     }
 
     // Return the created protocol
-    const createdProtocol = await executeAuthQueryOne(
-      getProtocolById(protocolId),
-      [],
+    const createdProtocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(protocolId),
       req.token,
     );
     res.created(createdProtocol, "Protocol created successfully");
   }),
 );
+
+// Helper function to copy tasks from template protocol
+async function copyProtocolTasks(templateProtocolId, newProtocolId, token) {
+  // Get template protocol tasks
+  const templateTasks = await executeAuthQueryObj(
+    DatabaseQueries.protocolTasks.getByProtocol(templateProtocolId),
+    token,
+  );
+
+  for (const templateTask of templateTasks) {
+    const newProtocolTaskId = generateUUID();
+
+    // Create protocol task
+    await executeAuthInsertObj(
+      DatabaseQueries.protocolTasks.create(
+        newProtocolTaskId,
+        newProtocolId,
+        templateTask.task_id,
+        templateTask.order_index,
+        templateTask.importance_rating,
+        templateTask.notes,
+      ),
+      token,
+    );
+
+    // Copy sensors
+    await executeAuthInsertObj(
+      DatabaseQueries.protocolTaskSensors.copyFromTask(
+        newProtocolTaskId,
+        templateTask.task_id,
+      ),
+      token,
+    );
+
+    // Copy domains
+    await executeAuthInsertObj(
+      DatabaseQueries.protocolTaskDomains.copyFromTask(
+        newProtocolTaskId,
+        templateTask.task_id,
+      ),
+      token,
+    );
+  }
+}
 
 // Update protocol
 router.put(
@@ -269,7 +535,8 @@ router.put(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, description } = req.body;
+    const userContext = getUserContext(req.token);
 
     if (!id) {
       throw new ValidationError("Protocol ID is required");
@@ -296,28 +563,36 @@ router.put(
         message: "Protocol name must be less than 100 characters",
       });
     }
+    if (description && description.length > 500) {
+      errors.push({
+        field: "description",
+        message: "Description must be less than 500 characters",
+      });
+    }
 
     if (errors.length > 0) {
       throw new ValidationError("Protocol validation failed", { errors });
     }
 
-    // Check if protocol exists
-    const existingProtocol = await executeAuthQueryOne(
-      getProtocolById(id),
-      [],
+    // Check if protocol exists and user owns it
+    const existingProtocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(id),
       req.token,
     );
     if (!existingProtocol) {
       throw new NotFoundError("Protocol");
     }
+    if (existingProtocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only update your own protocols");
+    }
 
     // Check if another protocol with same name exists for the user
-    const { getUserContext } = require("../authDB.js");
-    const userContext = getUserContext(req.token);
-    const duplicateQuery = getProtocolByName(name.trim(), userContext.userId);
-    const duplicate = await executeAuthQueryOne(duplicateQuery, [], req.token);
+    const duplicate = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getByName(name.trim(), userContext.userId),
+      req.token,
+    );
 
-    if (duplicate && duplicate.id !== parseInt(id)) {
+    if (duplicate && duplicate.id !== id) {
       throw new ConflictError(
         "Another protocol with this name already exists",
         {
@@ -328,10 +603,15 @@ router.put(
       );
     }
 
-    const query = updateProtocol(id, name.trim());
-
     try {
-      const affectedRows = await executeAuthUpdate(query, [], req.token);
+      const affectedRows = await executeAuthUpdateObj(
+        DatabaseQueries.protocols.update(
+          id,
+          name.trim(),
+          description?.trim() || null,
+        ),
+        req.token,
+      );
 
       if (affectedRows === 0) {
         throw new NotFoundError("Protocol");
@@ -347,9 +627,8 @@ router.put(
     }
 
     // Return updated protocol
-    const updatedProtocol = await executeAuthQueryOne(
-      getProtocolById(id),
-      [],
+    const updatedProtocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(id),
       req.token,
     );
     res.success(updatedProtocol, "Protocol updated successfully");
@@ -362,192 +641,382 @@ router.delete(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
+    const userContext = getUserContext(req.token);
 
     if (!id) {
       throw new ValidationError("Protocol ID is required");
     }
 
-    // Check if protocol exists
-    const existingProtocol = await executeAuthQueryOne(
-      getProtocolById(id),
-      [],
+    // Check if protocol exists and user owns it
+    const existingProtocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(id),
       req.token,
     );
     if (!existingProtocol) {
       throw new NotFoundError("Protocol");
     }
-
-    const query = deleteProtocol(id);
+    if (existingProtocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only delete your own protocols");
+    }
 
     try {
-      const affectedRows = await executeAuthUpdate(query, [], req.token);
+      const affectedRows = await executeAuthUpdateObj(
+        DatabaseQueries.protocols.delete(id),
+        req.token,
+      );
 
       if (affectedRows === 0) {
         throw new NotFoundError("Protocol");
       }
     } catch (error) {
-      if (error.code === "ER_ROW_IS_REFERENCED_2") {
-        throw new ValidationError(
-          "Cannot delete protocol that contains sections",
-          {
-            details: "Remove all sections from the protocol before deleting it",
-          },
-        );
-      }
-      throw error;
+      throw new DatabaseError("Failed to delete protocol");
     }
 
     res.success(null, "Protocol deleted successfully");
   }),
 );
 
-// Add section to protocol
+// Add task to protocol
 router.post(
-  "/:id/sections/:sectionId",
+  "/:id/tasks/:taskId",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { id: protocolId, sectionId } = req.params;
-    const { orderIndex = 0 } = req.body;
+    const { id: protocolId, taskId } = req.params;
+    const {
+      order_index,
+      importance_rating,
+      notes,
+      copy_defaults = true,
+    } = req.body;
+    const userContext = getUserContext(req.token);
 
-    if (!protocolId) {
-      throw new ValidationError("Protocol ID is required");
-    }
-    if (!sectionId) {
-      throw new ValidationError("Section ID is required");
+    if (!protocolId || !taskId) {
+      throw new ValidationError("Protocol ID and Task ID are required");
     }
 
     // Validation
     const errors = [];
 
-    if (orderIndex !== undefined && (isNaN(orderIndex) || orderIndex < 0)) {
+    if (order_index !== undefined && (isNaN(order_index) || order_index < 0)) {
       errors.push({
-        field: "orderIndex",
+        field: "order_index",
         message: "Order index must be a non-negative number",
       });
     }
 
+    if (
+      importance_rating !== undefined &&
+      (isNaN(importance_rating) ||
+        importance_rating < 0 ||
+        importance_rating > 10)
+    ) {
+      errors.push({
+        field: "importance_rating",
+        message: "Importance rating must be between 0 and 10",
+      });
+    }
+
     if (errors.length > 0) {
-      throw new ValidationError("Section assignment validation failed", {
+      throw new ValidationError("Task assignment validation failed", {
         errors,
       });
     }
 
-    // Check if protocol exists
-    const existingProtocol = await executeAuthQueryOne(
-      getProtocolById(protocolId),
-      [],
+    // Check if protocol exists and user owns it
+    const protocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(protocolId),
       req.token,
     );
-    if (!existingProtocol) {
+    if (!protocol) {
       throw new NotFoundError("Protocol");
     }
+    if (protocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only modify your own protocols");
+    }
 
-    const query = addSectionToProtocol(protocolId, sectionId, orderIndex);
+    // Check if task exists
+    const task = await executeAuthQueryOneObj(
+      DatabaseQueries.tasks.getById(taskId),
+      req.token,
+    );
+    if (!task) {
+      throw new NotFoundError("Task");
+    }
+
+    // Get next order index if not provided
+    let finalOrderIndex = order_index;
+    if (finalOrderIndex === undefined || finalOrderIndex === null) {
+      const maxOrderResult = await executeAuthQueryOneObj(
+        DatabaseQueries.protocolTasks.getMaxOrder(protocolId),
+        req.token,
+      );
+      finalOrderIndex = (maxOrderResult?.max_order || -1) + 1;
+    }
+
+    const protocolTaskId = generateUUID();
 
     try {
-      await executeAuthUpdate(query, [], req.token);
+      // Create protocol task
+      await executeAuthInsertObj(
+        DatabaseQueries.protocolTasks.create(
+          protocolTaskId,
+          protocolId,
+          taskId,
+          finalOrderIndex,
+          importance_rating || null,
+          notes || null,
+        ),
+        req.token,
+      );
+
+      // Copy default relationships if requested
+      if (copy_defaults) {
+        await executeAuthInsertObj(
+          DatabaseQueries.protocolTaskSensors.copyFromTask(
+            protocolTaskId,
+            taskId,
+          ),
+          req.token,
+        );
+
+        await executeAuthInsertObj(
+          DatabaseQueries.protocolTaskDomains.copyFromTask(
+            protocolTaskId,
+            taskId,
+          ),
+          req.token,
+        );
+      }
     } catch (error) {
       if (error.code === "ER_DUP_ENTRY") {
-        throw new ConflictError("Section is already added to this protocol");
+        throw new ConflictError("Task is already added to this protocol");
       }
-      if (error.code === "ER_NO_REFERENCED_ROW_2") {
-        throw new NotFoundError("Section");
-      }
-      throw error;
+      throw new DatabaseError("Failed to add task to protocol");
     }
 
-    res.success(null, "Section added to protocol successfully");
+    res.success(
+      { protocol_task_id: protocolTaskId },
+      "Task added to protocol successfully",
+    );
   }),
 );
 
-// Remove section from protocol
+// Remove task from protocol
 router.delete(
-  "/:id/sections/:sectionId",
+  "/:id/tasks/:taskId",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { id: protocolId, sectionId } = req.params;
+    const { id: protocolId, taskId } = req.params;
+    const userContext = getUserContext(req.token);
 
-    if (!protocolId) {
-      throw new ValidationError("Protocol ID is required");
-    }
-    if (!sectionId) {
-      throw new ValidationError("Section ID is required");
+    if (!protocolId || !taskId) {
+      throw new ValidationError("Protocol ID and Task ID are required");
     }
 
-    const query = removeSectionFromProtocol(protocolId, sectionId);
-    const affectedRows = await executeAuthUpdate(query, [], req.token);
+    // Check if protocol exists and user owns it
+    const protocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(protocolId),
+      req.token,
+    );
+    if (!protocol) {
+      throw new NotFoundError("Protocol");
+    }
+    if (protocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only modify your own protocols");
+    }
+
+    // Find the protocol task to delete
+    const protocolTasks = await executeAuthQueryObj(
+      DatabaseQueries.protocolTasks.getByProtocol(protocolId),
+      req.token,
+    );
+
+    const protocolTask = protocolTasks.find((pt) => pt.task_id === taskId);
+    if (!protocolTask) {
+      throw new NotFoundError("Task not found in protocol");
+    }
+
+    const affectedRows = await executeAuthUpdateObj(
+      DatabaseQueries.protocolTasks.delete(protocolTask.id),
+      req.token,
+    );
 
     if (affectedRows === 0) {
-      throw new NotFoundError("Section not found in protocol");
+      throw new NotFoundError("Task not found in protocol");
     }
 
-    res.success(null, "Section removed from protocol successfully");
+    res.success(null, "Task removed from protocol successfully");
   }),
 );
 
-// Update section order in protocol
+// Update task order in protocol
 router.put(
-  "/:id/sections/:sectionId/order",
+  "/:id/tasks/:taskId/order",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { id: protocolId, sectionId } = req.params;
-    const { orderIndex } = req.body;
+    const { id: protocolId, taskId } = req.params;
+    const { order_index } = req.body;
+    const userContext = getUserContext(req.token);
 
-    if (!protocolId) {
-      throw new ValidationError("Protocol ID is required");
-    }
-    if (!sectionId) {
-      throw new ValidationError("Section ID is required");
+    if (!protocolId || !taskId) {
+      throw new ValidationError("Protocol ID and Task ID are required");
     }
 
     // Validation
     const errors = [];
 
-    if (orderIndex === undefined) {
+    if (order_index === undefined || isNaN(order_index) || order_index < 0) {
       errors.push({
-        field: "orderIndex",
-        message: "Order index is required",
-      });
-    } else if (isNaN(orderIndex) || orderIndex < 0) {
-      errors.push({
-        field: "orderIndex",
+        field: "order_index",
         message: "Order index must be a non-negative number",
       });
     }
 
     if (errors.length > 0) {
-      throw new ValidationError("Order update validation failed", { errors });
+      throw new ValidationError("Task order update validation failed", {
+        errors,
+      });
     }
 
-    const query = updateSectionOrder(protocolId, sectionId, orderIndex);
-    const affectedRows = await executeAuthUpdate(query, [], req.token);
-
-    if (affectedRows === 0) {
-      throw new NotFoundError("Section not found in protocol");
+    // Check if protocol exists and user owns it
+    const protocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(protocolId),
+      req.token,
+    );
+    if (!protocol) {
+      throw new NotFoundError("Protocol");
+    }
+    if (protocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only modify your own protocols");
     }
 
-    res.success(null, "Section order updated successfully");
+    // Find the protocol task
+    const protocolTasks = await executeAuthQueryObj(
+      DatabaseQueries.protocolTasks.getByProtocol(protocolId),
+      req.token,
+    );
+
+    const protocolTask = protocolTasks.find((pt) => pt.task_id === taskId);
+    if (!protocolTask) {
+      throw new NotFoundError("Task not found in protocol");
+    }
+
+    try {
+      // Update the task order
+      await executeAuthUpdateObj(
+        DatabaseQueries.protocolTasks.updateOrder(protocolTask.id, order_index),
+        req.token,
+      );
+
+      res.success(null, "Task order updated successfully");
+    } catch (error) {
+      throw new DatabaseError("Failed to update task order");
+    }
   }),
 );
 
-// Remove all sections from protocol
-router.delete(
-  "/:id/sections",
+// Bulk update task orders in protocol
+router.put(
+  "/:id/tasks/reorder",
   requireAuth,
   asyncHandler(async (req, res) => {
     const { id: protocolId } = req.params;
+    const { task_orders } = req.body; // Array of {task_id, order_index}
+    const userContext = getUserContext(req.token);
 
     if (!protocolId) {
       throw new ValidationError("Protocol ID is required");
     }
 
-    const query = removeAllSectionsFromProtocol(protocolId);
-    const affectedRows = await executeAuthUpdate(query, [], req.token);
+    if (!Array.isArray(task_orders) || task_orders.length === 0) {
+      throw new ValidationError("task_orders must be a non-empty array");
+    }
 
-    res.success(
-      { removedCount: affectedRows },
-      "All sections removed from protocol successfully",
+    // Validation
+    const errors = [];
+
+    task_orders.forEach((item, index) => {
+      if (!item.task_id) {
+        errors.push({
+          field: `task_orders[${index}].task_id`,
+          message: "Task ID is required",
+        });
+      }
+      if (
+        item.order_index === undefined ||
+        isNaN(item.order_index) ||
+        item.order_index < 0
+      ) {
+        errors.push({
+          field: `task_orders[${index}].order_index`,
+          message: "Order index must be a non-negative number",
+        });
+      }
+    });
+
+    if (errors.length > 0) {
+      throw new ValidationError("Task reorder validation failed", { errors });
+    }
+
+    // Check if protocol exists and user owns it
+    const protocol = await executeAuthQueryOneObj(
+      DatabaseQueries.protocols.getById(protocolId),
+      req.token,
     );
+    if (!protocol) {
+      throw new NotFoundError("Protocol");
+    }
+    if (protocol.created_by !== userContext.userId) {
+      throw new AuthorizationError("You can only modify your own protocols");
+    }
+
+    // Get all protocol tasks
+    const protocolTasks = await executeAuthQueryObj(
+      DatabaseQueries.protocolTasks.getByProtocol(protocolId),
+      req.token,
+    );
+
+    // Build updates array with protocol_task_id and order_index
+    const updates = [];
+    for (const taskOrder of task_orders) {
+      const protocolTask = protocolTasks.find(
+        (pt) => pt.task_id === taskOrder.task_id,
+      );
+      if (protocolTask) {
+        updates.push({
+          id: protocolTask.id,
+          orderIndex: taskOrder.order_index,
+        });
+      }
+    }
+
+    if (updates.length === 0) {
+      throw new ValidationError("No valid tasks found to reorder");
+    }
+
+    try {
+      // Perform bulk update
+      if (updates.length === 1) {
+        // Single update
+        await executeAuthUpdateObj(
+          DatabaseQueries.protocolTasks.updateOrder(
+            updates[0].id,
+            updates[0].orderIndex,
+          ),
+          req.token,
+        );
+      } else {
+        // Bulk update
+        await executeAuthUpdateObj(
+          DatabaseQueries.protocolTasks.updateOrders(updates),
+          req.token,
+        );
+      }
+
+      res.success(null, "Task orders updated successfully");
+    } catch (error) {
+      throw new DatabaseError("Failed to update task orders");
+    }
   }),
 );
 

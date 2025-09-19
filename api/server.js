@@ -12,8 +12,8 @@ const { attachResponseHelpers } = require("./utils/responseHelper.js");
 const authRoutes = require("./routes/auth.js");
 const userRoutes = require("./routes/users.js");
 const sensorRoutes = require("./routes/sensors.js");
-const subsectionRoutes = require("./routes/subsections.js");
-const sectionRoutes = require("./routes/sections.js");
+const taskRoutes = require("./routes/tasks.js");
+const domainRoutes = require("./routes/domains.js");
 const protocolRoutes = require("./routes/protocols.js");
 
 const app = express();
@@ -75,35 +75,38 @@ app.get("/health", (req, res) => {
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/sensors", sensorRoutes);
-app.use("/subsections", subsectionRoutes);
-app.use("/sections", sectionRoutes);
+app.use("/tasks", taskRoutes);
+app.use("/domains", domainRoutes);
 app.use("/protocols", protocolRoutes);
 
 // Root endpoint
 app.get("/", (req, res) => {
   res.success(
     {
-      message: "Delphi API v2",
+      message: "Delphi API v2 - New Schema",
       version: "2.0.0",
       documentation: "https://docs.delphi-api.com",
       endpoints: {
         auth: "/auth",
         users: "/users",
         sensors: "/sensors",
-        subsections: "/subsections",
-        sections: "/sections",
+        tasks: "/tasks",
+        domains: "/domains",
         protocols: "/protocols",
         health: "/health",
       },
       features: [
-        "Authentication & Authorization",
+        "Authentication & Authorization with bcryptjs",
+        "User Registration & Login",
+        "Protocol-based Task Management",
+        "Global Templates with User Customization",
         "Comprehensive Error Handling",
         "Input Validation",
         "Structured API Responses",
         "Database Transaction Support",
       ],
     },
-    "Welcome to Delphi API v2",
+    "Welcome to Delphi API v2 - New Schema Implementation",
   );
 });
 

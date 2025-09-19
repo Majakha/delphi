@@ -1,15 +1,22 @@
 import React, { useState } from "react";
 import { useAuth } from "../hooks/useDataProvider";
-import { Download, Upload, Settings, CheckCircle } from "lucide-react";
-import { Protocol } from "../types";
+import {
+  Download,
+  Upload,
+  Settings,
+  CheckCircle,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import { FullProtocol } from "../services/types";
 
 interface HeaderProps {
-  protocol?: Protocol;
-  onProtocolChange?: (protocol: Protocol) => void;
+  protocol?: FullProtocol;
+  onProtocolChange?: (protocol: FullProtocol) => void;
   protocolName?: string;
   lastUpdated?: Date | string;
-  enabledSections?: number;
-  totalSections?: number;
+  enabledTasks?: number;
+  totalTasks?: number;
   enabledTotalTime?: number;
   showAdvanced?: boolean;
   onToggleAdvanced?: () => void;
@@ -18,6 +25,7 @@ interface HeaderProps {
   onCompleteProtocol?: () => void;
   onSwitchProtocol?: () => void;
   onCreateNewProtocol?: () => void;
+  onDeleteProtocol?: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -25,8 +33,8 @@ const Header: React.FC<HeaderProps> = ({
   onProtocolChange,
   protocolName,
   lastUpdated,
-  enabledSections,
-  totalSections,
+  enabledTasks,
+  totalTasks,
   enabledTotalTime,
   showAdvanced,
   onToggleAdvanced,
@@ -35,9 +43,11 @@ const Header: React.FC<HeaderProps> = ({
   onCompleteProtocol,
   onSwitchProtocol,
   onCreateNewProtocol,
+  onDeleteProtocol,
 }) => {
   const { user, logout, loading: authLoading } = useAuth();
   const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const handleLogout = async () => {
     if (!logoutConfirm) {
@@ -47,16 +57,51 @@ const Header: React.FC<HeaderProps> = ({
 
     try {
       await logout();
-      // The auth state will be updated automatically
     } catch (error) {
       console.error("Logout error:", error);
-      // Even if there's an error, the auth state should be cleared locally
     }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) {
+      setDeleteConfirm(true);
+      return;
+    }
+
+    if (onDeleteProtocol) {
+      await onDeleteProtocol();
+    }
+    setDeleteConfirm(false);
   };
 
   const cancelLogout = () => {
     setLogoutConfirm(false);
   };
+
+  const cancelDelete = () => {
+    setDeleteConfirm(false);
+  };
+
+  // Calculate protocol statistics
+  const taskStats = protocol
+    ? {
+        totalTasks: protocol.tasks.length,
+        activeTasks: protocol.tasks.filter((task) => task.type === "task")
+          .length,
+        breaks: protocol.tasks.filter((task) => task.type === "break").length,
+        overrides: protocol.tasks.filter(
+          (task) =>
+            task.has_title_override ||
+            task.has_time_override ||
+            task.has_description_override ||
+            task.has_notes_override,
+        ).length,
+        totalTime: protocol.tasks.reduce(
+          (sum, task) => sum + (task.time || 0),
+          0,
+        ),
+      }
+    : null;
 
   return (
     <header className="bg-white shadow-sm border-b flex-shrink-0">
@@ -87,7 +132,7 @@ const Header: React.FC<HeaderProps> = ({
                       const date = new Date(lastUpdated);
                       return isNaN(date.getTime())
                         ? "Invalid date"
-                        : date.toLocaleDateString();
+                        : date.toLocaleString();
                     } catch {
                       return "Invalid date";
                     }
@@ -95,7 +140,9 @@ const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
               {user && (
-                <div className="text-sm text-gray-600">User ID: {user.id}</div>
+                <div className="text-sm text-gray-600">
+                  Signed in as: {user.username}
+                </div>
               )}
             </div>
             {!logoutConfirm ? (
@@ -172,52 +219,81 @@ const Header: React.FC<HeaderProps> = ({
 
         {/* Protocol Header (shown when protocol is available) */}
         {protocol && onProtocolChange && (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2 border-t border-gray-200">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pt-4 border-t border-gray-200">
             <div className="flex-1">
-              <input
-                type="text"
-                value={protocol.name}
-                onChange={(e) =>
-                  onProtocolChange({ ...protocol, name: e.target.value })
-                }
-                className="input-field text-xl font-bold border-none bg-transparent p-0"
-                placeholder="Protocol Name"
-              />
-              <div className="flex flex-wrap items-center gap-4 mt-2">
-                <select
-                  value={protocol.type}
+              <div className="flex items-center gap-3 mb-2">
+                <input
+                  type="text"
+                  value={protocol.name}
+                  onChange={(e) =>
+                    onProtocolChange({ ...protocol, name: e.target.value })
+                  }
+                  className="text-xl font-bold border-none bg-transparent p-0 focus:ring-0 focus:outline-none flex-1 min-w-0"
+                  placeholder="Protocol Name"
+                />
+                {protocol.is_template && (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                    Template
+                  </span>
+                )}
+              </div>
+
+              {protocol.description && (
+                <textarea
+                  value={protocol.description || ""}
                   onChange={(e) =>
                     onProtocolChange({
                       ...protocol,
-                      type: e.target.value as "in-lab" | "real-world",
+                      description: e.target.value,
                     })
                   }
-                  className="text-sm border border-gray-300 rounded px-2 py-1 flex-shrink-0"
-                >
-                  <option value="in-lab">In-lab</option>
-                  <option value="real-world">Real-world</option>
-                </select>
-                <span className="text-sm text-gray-500 whitespace-nowrap">
-                  {enabledSections} of {totalSections} sections enabled •{" "}
-                  {enabledTotalTime} min total •{" "}
-                  {protocol?.sections.reduce(
-                    (count, section) =>
-                      count + (section.subsections?.length || 0),
-                    0,
-                  ) || 0}{" "}
-                  subsections
-                </span>
-              </div>
+                  className="text-sm text-gray-600 border-none bg-transparent p-0 resize-none focus:ring-0 focus:outline-none w-full"
+                  placeholder="Protocol description..."
+                  rows={2}
+                />
+              )}
+
+              {taskStats && (
+                <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-500">
+                  <span className="whitespace-nowrap">
+                    <span className="font-medium text-blue-600">
+                      {taskStats.activeTasks}
+                    </span>{" "}
+                    tasks
+                  </span>
+                  <span className="whitespace-nowrap">
+                    <span className="font-medium text-green-600">
+                      {taskStats.breaks}
+                    </span>{" "}
+                    breaks
+                  </span>
+                  <span className="whitespace-nowrap">
+                    <span className="font-medium text-orange-600">
+                      {Math.floor(taskStats.totalTime / 60)}h{" "}
+                      {taskStats.totalTime % 60}m
+                    </span>{" "}
+                    total
+                  </span>
+                  {taskStats.overrides > 0 && (
+                    <span className="whitespace-nowrap">
+                      <span className="font-medium text-purple-600">
+                        {taskStats.overrides}
+                      </span>{" "}
+                      overrides
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 ml-auto">
+            <div className="flex flex-wrap items-center gap-2">
               {onCompleteProtocol && (
                 <button
                   onClick={onCompleteProtocol}
-                  className="btn-primary flex items-center gap-1 py-1 px-3"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                 >
                   <CheckCircle className="w-4 h-4" />
-                  <span>Complete Protocol</span>
+                  Complete
                 </button>
               )}
 
@@ -225,7 +301,7 @@ const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={onToggleAdvanced}
-                  className="btn-secondary flex items-center gap-1"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   <Settings className="w-4 h-4" />
                   Advanced
@@ -233,7 +309,7 @@ const Header: React.FC<HeaderProps> = ({
               )}
 
               {onImport && (
-                <label className="btn-secondary flex items-center gap-1 cursor-pointer">
+                <label className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer">
                   <Upload className="w-4 h-4" />
                   Import
                   <input
@@ -249,7 +325,7 @@ const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={onExport}
-                  className="btn-primary flex items-center gap-1"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   <Download className="w-4 h-4" />
                   Export
@@ -260,10 +336,10 @@ const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={onSwitchProtocol}
-                  className="btn-secondary flex items-center gap-1"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   <Settings className="w-4 h-4" />
-                  Switch Protocol
+                  Switch
                 </button>
               )}
 
@@ -271,11 +347,41 @@ const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={onCreateNewProtocol}
-                  className="btn-secondary flex items-center gap-1"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
-                  <Settings className="w-4 h-4" />
-                  New Protocol
+                  <Plus className="w-4 h-4" />
+                  New
                 </button>
+              )}
+
+              {onDeleteProtocol && (
+                <div className="relative">
+                  {!deleteConfirm ? (
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      className="inline-flex items-center gap-2 px-3 py-2 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleDelete}
+                        className="inline-flex items-center px-2 py-1 border border-red-300 shadow-sm text-xs font-medium rounded text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        onClick={cancelDelete}
+                        className="inline-flex items-center px-2 py-1 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

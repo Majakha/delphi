@@ -1,19 +1,35 @@
 import {
   Protocol,
-  Sensor,
-  SharedSection,
-  SharedSubsection,
-  User,
-  SyncQueueItem,
+  FullProtocol,
   StoredProtocol,
-  DataProviderStatus,
-  DataProviderEventCallback,
+  Task,
+  TaskWithRelations,
+  Domain,
+  Sensor,
+  User,
   NotificationType,
   CreateProtocolData,
+  UpdateProtocolData,
+  CreateTaskData,
+  UpdateTaskData,
+  CreateDomainData,
+  UpdateDomainData,
   CreateSensorData,
-  CreateSectionData,
-  CreateSubsectionData,
+  UpdateSensorData,
+  AddTaskToProtocolData,
+  RegisterData,
+  LoginData,
+  ChangePasswordData,
   RequestOptions,
+  SyncQueueItem,
+  DataProviderStatus,
+  TaskFilters,
+  SensorFilters,
+  DomainFilters,
+  ProtocolFilters,
+  ApiResponse,
+  ApiListResponse,
+  DataProviderEventCallback,
 } from "./types";
 import { AuthManager } from "./AuthManager";
 import { CacheManager } from "./CacheManager";
@@ -25,87 +41,88 @@ export class DataProvider {
   private cacheManager: CacheManager;
   private storageManager: StorageManager;
   private syncQueue: SyncQueueItem[] = [];
-  private listeners = new Set<DataProviderEventCallback>();
+  private listeners: DataProviderEventCallback[] = [];
   private isOnline: boolean = navigator.onLine;
   private syncTimeout: NodeJS.Timeout | null = null;
   private periodicSyncInterval: NodeJS.Timeout | null = null;
 
-  constructor(baseUrl?: string) {
-    // Determine the correct API base URL based on environment
-    if (!baseUrl) {
-      if (process.env.REACT_APP_API_BASE_URL) {
-        // Use explicit environment variable if set
-        baseUrl = process.env.REACT_APP_API_BASE_URL;
-      } else {
-        // Default to API container URL for Docker environment
-        baseUrl = "http://localhost:3001";
-      }
-    }
-    this.baseUrl = baseUrl;
-    this.storageManager = new StorageManager();
-    this.authManager = new AuthManager(this.storageManager);
-    this.cacheManager = new CacheManager();
+  constructor(
+    baseUrl: string,
+    storageManager: StorageManager,
+    cacheManager: CacheManager,
+    authManager: AuthManager,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, ""); // Remove trailing slashes
+    this.storageManager = storageManager;
+    this.cacheManager = cacheManager;
+    this.authManager = authManager;
+
+    // Load sync queue from storage
+    this.syncQueue =
+      this.storageManager.get<SyncQueueItem[]>("syncQueue") || [];
 
     this.initializeEventListeners();
     this.startPeriodicSync();
   }
 
-  // ===== EVENT SYSTEM =====
-
   /**
    * Subscribe to data provider events
    */
   subscribe(callback: DataProviderEventCallback): () => void {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+    this.listeners.push(callback);
+    return () => {
+      this.listeners = this.listeners.filter(
+        (listener) => listener !== callback,
+      );
+    };
   }
 
   /**
-   * Notify all listeners of an event
+   * Notify all listeners of events
    */
   private notify(type: NotificationType, data?: any): void {
-    this.listeners.forEach((callback) => {
+    this.listeners.forEach((listener) => {
       try {
-        callback(type, data);
+        listener(type, data);
       } catch (error) {
         console.error("Listener error:", error);
       }
     });
   }
 
-  // ===== INITIALIZATION =====
-
+  /**
+   * Initialize event listeners for online/offline status
+   */
   private initializeEventListeners(): void {
-    window.addEventListener("online", () => {
-      this.isOnline = true;
-      this.syncPendingChanges();
-    });
+    const updateOnlineStatus = () => {
+      const wasOnline = this.isOnline;
+      this.isOnline = navigator.onLine;
 
-    window.addEventListener("offline", () => {
-      this.isOnline = false;
-    });
-
-    window.addEventListener("beforeunload", () => {
-      if (this.syncQueue.length > 0) {
+      if (!wasOnline && this.isOnline) {
+        this.notify("syncing");
         this.syncPendingChanges();
       }
-    });
+    };
+
+    window.addEventListener("online", updateOnlineStatus);
+    window.addEventListener("offline", updateOnlineStatus);
   }
 
+  /**
+   * Start periodic sync for pending changes
+   */
   private startPeriodicSync(): void {
     this.periodicSyncInterval = setInterval(() => {
       if (this.isOnline && this.syncQueue.length > 0) {
         this.syncPendingChanges();
       }
-    }, 60000); // 60 seconds
+    }, 30000); // Every 30 seconds
   }
 
-  // ===== API REQUEST HANDLING =====
-
   /**
-   * Generic API request handler with authentication
+   * Make authenticated API request
    */
-  private async apiRequest<T = any>(
+  async apiRequest<T = any>(
     endpoint: string,
     options: RequestOptions = {},
   ): Promise<T> {
@@ -145,7 +162,7 @@ export class DataProvider {
       }
 
       if (response.status === 403) {
-        this.notify("auth_error", { message: "Access forbidden" });
+        this.notify("authorization_error", { message: "Access forbidden" });
         throw new Error("Access forbidden");
       }
 
@@ -163,6 +180,11 @@ export class DataProvider {
           errorData?.message ||
           `API Error: ${response.status} ${response.statusText}`;
 
+        // Notify specific error types
+        if (response.status === 400) {
+          this.notify("validation_error", errorData);
+        }
+
         throw new Error(errorMessage);
       }
 
@@ -178,31 +200,29 @@ export class DataProvider {
 
   // ===== AUTHENTICATION =====
 
-  async login(password: string): Promise<User> {
+  async register(registerData: RegisterData): Promise<User> {
+    try {
+      this.notify("registering");
+      const user = await this.authManager.register(this.baseUrl, registerData);
+      this.notify("registered", { user });
+      return user;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Registration failed";
+      this.notify("auth_error", { error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async login(loginData: LoginData): Promise<User> {
     try {
       this.notify("logging_in");
-      const user = await this.authManager.login(this.baseUrl, password);
+      const user = await this.authManager.login(this.baseUrl, loginData);
       this.notify("logged_in", { user });
       return user;
     } catch (error) {
-      // Parse structured error response
-      let errorMessage = "Login failed";
-      if (error instanceof Error) {
-        try {
-          // Try to parse JSON error from API response
-          const match = error.message.match(/API Error: \d+ (.+)/);
-          if (match) {
-            const errorData = JSON.parse(match[1]);
-            errorMessage =
-              errorData?.error?.message || errorData?.message || error.message;
-          } else {
-            errorMessage = error.message;
-          }
-        } catch {
-          errorMessage = error.message;
-        }
-      }
-
+      const errorMessage =
+        error instanceof Error ? error.message : "Login failed";
       this.notify("auth_error", { error: errorMessage });
       throw new Error(errorMessage);
     }
@@ -210,23 +230,37 @@ export class DataProvider {
 
   async logout(): Promise<void> {
     try {
+      this.notify("logging_out");
       await this.authManager.logout(this.baseUrl);
       this.cacheManager.clear();
       this.syncQueue = [];
+      this.storageManager.remove("syncQueue");
       this.notify("logged_out");
     } catch (error) {
       // Even if logout API call fails, we still want to clear local state
       this.cacheManager.clear();
       this.syncQueue = [];
+      this.storageManager.remove("syncQueue");
       this.notify("logged_out");
 
       console.warn("Logout API call failed, but local state cleared:", error);
     }
   }
 
+  async changePassword(passwordData: ChangePasswordData): Promise<void> {
+    try {
+      await this.authManager.changePassword(this.baseUrl, passwordData);
+      this.notify("logged_out"); // User needs to log in again
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Password change failed";
+      this.notify("auth_error", { error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
   isAuthenticated(): boolean {
     const isAuth = this.authManager.isAuthenticated();
-    // If auth manager thinks we're not authenticated but we haven't notified yet
     if (!isAuth && this.getCurrentUser()) {
       this.notify("session_expired");
     }
@@ -239,52 +273,91 @@ export class DataProvider {
 
   // ===== PROTOCOL OPERATIONS =====
 
-  async loadProtocol(id: string): Promise<StoredProtocol> {
+  async getProtocols(
+    filters: ProtocolFilters = {},
+  ): Promise<Protocol[] | FullProtocol[]> {
+    try {
+      this.notify("loading", { type: "protocols" });
+
+      const params = new URLSearchParams();
+      if (filters.templates_only) params.set("templates_only", "true");
+      if (filters.full) params.set("full", "true");
+
+      const endpoint = filters.user_only
+        ? `/protocols/my${params.toString() ? `?${params.toString()}` : ""}`
+        : `/protocols${params.toString() ? `?${params.toString()}` : ""}`;
+
+      const response = filters.full
+        ? await this.apiRequest<ApiListResponse<FullProtocol>>(endpoint)
+        : await this.apiRequest<ApiListResponse<Protocol>>(endpoint);
+      this.notify("loaded", { type: "protocols" });
+      return response.data;
+    } catch (error) {
+      this.notify("error", {
+        type: "protocols_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  async getProtocol(
+    id: string,
+    full: boolean = false,
+  ): Promise<FullProtocol | Protocol> {
     try {
       this.notify("loading", { type: "protocol", id });
 
-      // Try local storage first
-      const localProtocol = this.storageManager.get<StoredProtocol>(
-        `protocol_${id}`,
-      );
+      // Try local storage first for full protocols
+      if (full) {
+        const localProtocol = this.storageManager.get<StoredProtocol>(
+          `protocol_${id}`,
+        );
+        if (localProtocol && this.isOnline) {
+          // Use local data immediately but check server for updates in background
+          this.apiRequest<ApiResponse<FullProtocol>>(`/protocols/${id}/full`)
+            .then((response) => {
+              const serverProtocol = response.data;
+              const serverTimestamp = new Date(serverProtocol.updated_at);
+              const localTimestamp = new Date(localProtocol.lastModified);
 
-      if (localProtocol && this.isOnline) {
-        // Use local data immediately but check server for updates
-        this.apiRequest<Protocol>(`/protocols/${id}`)
-          .then((serverProtocol) => {
-            const serverTimestamp = new Date(serverProtocol.updatedAt);
-            const localTimestamp = new Date(localProtocol.lastModified);
-
-            if (serverTimestamp > localTimestamp) {
-              const updatedProtocol: StoredProtocol = {
-                ...serverProtocol,
-                lastModified: new Date().toISOString(),
-                syncStatus: "synced",
-              };
-              this.storageManager.set(`protocol_${id}`, updatedProtocol);
-              this.notify("protocol_updated", updatedProtocol);
-            }
-          })
-          .catch(() => {
-            this.notify("sync_warning", {
-              message: "Could not check for updates",
+              if (serverTimestamp > localTimestamp) {
+                const updatedProtocol: StoredProtocol = {
+                  ...serverProtocol,
+                  lastModified: new Date().toISOString(),
+                  syncStatus: "synced",
+                };
+                this.storageManager.set(`protocol_${id}`, updatedProtocol);
+                this.notify("protocol_updated", updatedProtocol);
+              }
+            })
+            .catch(() => {
+              this.notify("sync_warning", {
+                message: "Could not check for updates",
+              });
             });
-          });
 
-        return localProtocol;
+          return localProtocol;
+        }
       }
 
-      // No local data or offline, fetch from server
+      // Fetch from server
       if (this.isOnline) {
-        const protocol = await this.apiRequest<Protocol>(`/protocols/${id}`);
-        const storedProtocol: StoredProtocol = {
-          ...protocol,
-          lastModified: new Date().toISOString(),
-          syncStatus: "synced",
-        };
-        this.storageManager.set(`protocol_${id}`, storedProtocol);
+        const endpoint = full ? `/protocols/${id}/full` : `/protocols/${id}`;
+        const response =
+          await this.apiRequest<ApiResponse<FullProtocol | Protocol>>(endpoint);
+
+        if (full) {
+          const storedProtocol: StoredProtocol = {
+            ...(response.data as FullProtocol),
+            lastModified: new Date().toISOString(),
+            syncStatus: "synced",
+          };
+          this.storageManager.set(`protocol_${id}`, storedProtocol);
+        }
+
         this.notify("loaded", { type: "protocol", id });
-        return storedProtocol;
+        return response.data;
       }
 
       throw new Error("Protocol not available offline");
@@ -297,57 +370,67 @@ export class DataProvider {
     }
   }
 
-  async saveProtocol(protocol: Protocol): Promise<StoredProtocol> {
-    const timestamp = new Date().toISOString();
-
-    // Always save to localStorage immediately
-    const localProtocol: StoredProtocol = {
-      ...protocol,
-      lastModified: timestamp,
-      syncStatus: "pending",
-    };
-
-    this.storageManager.set(`protocol_${protocol.id}`, localProtocol);
-
-    // Add to sync queue if online
-    if (this.isOnline) {
-      this.addToSyncQueue("protocol", protocol.id, protocol, timestamp);
-      this.debouncedSync();
-    }
-
-    this.notify("saved_locally", { type: "protocol", id: protocol.id });
-    return localProtocol;
-  }
-
-  async createProtocol(protocolData: CreateProtocolData): Promise<Protocol> {
+  async createProtocol(data: CreateProtocolData): Promise<Protocol> {
     try {
       this.notify("creating", { type: "protocol" });
 
-      if (!this.isOnline) {
-        throw new Error("Cannot create new protocol while offline");
+      const response = await this.apiRequest<ApiResponse<Protocol>>(
+        "/protocols",
+        {
+          method: "POST",
+          body: data,
+        },
+      );
+
+      this.notify("created", { type: "protocol", data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create protocol";
+      this.notify("error", { type: "protocol_create", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async updateProtocol(
+    id: string,
+    data: UpdateProtocolData,
+  ): Promise<Protocol> {
+    try {
+      this.notify("updating", { type: "protocol", id });
+
+      const response = await this.apiRequest<ApiResponse<Protocol>>(
+        `/protocols/${id}`,
+        {
+          method: "PUT",
+          body: data,
+        },
+      );
+
+      // Update local storage if exists, preserving task data
+      const localProtocol = this.storageManager.get<StoredProtocol>(
+        `protocol_${id}`,
+      );
+      if (localProtocol) {
+        const updatedProtocol: StoredProtocol = {
+          ...localProtocol,
+          ...response.data,
+          // Preserve existing tasks to avoid data loss
+          tasks: localProtocol.tasks,
+          lastModified: new Date().toISOString(),
+          syncStatus: "synced",
+        };
+        this.storageManager.set(`protocol_${id}`, updatedProtocol);
+        this.notify("protocol_updated", updatedProtocol);
       }
 
-      const protocol = await this.apiRequest<Protocol>("/protocols", {
-        method: "POST",
-        body: protocolData,
-      });
-
-      // Save to localStorage
-      const storedProtocol: StoredProtocol = {
-        ...protocol,
-        lastModified: new Date().toISOString(),
-        syncStatus: "synced",
-      };
-      this.storageManager.set(`protocol_${protocol.id}`, storedProtocol);
-
-      this.notify("created", { type: "protocol", id: protocol.id });
-      return protocol;
+      this.notify("updated", { type: "protocol", data: response.data });
+      return response.data;
     } catch (error) {
-      this.notify("error", {
-        type: "protocol_create",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      throw error;
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update protocol";
+      this.notify("error", { type: "protocol_update", error: errorMessage });
+      throw new Error(errorMessage);
     }
   }
 
@@ -355,50 +438,395 @@ export class DataProvider {
     try {
       this.notify("deleting", { type: "protocol", id });
 
-      if (this.isOnline) {
-        await this.apiRequest(`/protocols/${id}`, { method: "DELETE" });
-      }
+      await this.apiRequest(`/protocols/${id}`, {
+        method: "DELETE",
+      });
 
+      // Remove from local storage
       this.storageManager.remove(`protocol_${id}`);
+
       this.notify("deleted", { type: "protocol", id });
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to delete protocol";
+      this.notify("error", { type: "protocol_delete", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async addTaskToProtocol(
+    protocolId: string,
+    taskId: string,
+    data: AddTaskToProtocolData = {},
+  ): Promise<{ protocol_task_id: string }> {
+    try {
+      this.notify("updating", { type: "protocol", id: protocolId });
+
+      const response = await this.apiRequest<
+        ApiResponse<{ protocol_task_id: string }>
+      >(`/protocols/${protocolId}/tasks/${taskId}`, {
+        method: "POST",
+        body: data,
+      });
+
+      // Invalidate local protocol cache and reload
+      this.storageManager.remove(`protocol_${protocolId}`);
+
+      // Reload protocol data to ensure consistency
+      try {
+        const updatedProtocol = await this.apiRequest<
+          ApiResponse<FullProtocol>
+        >(`/protocols/${protocolId}/full`);
+        const storedProtocol: StoredProtocol = {
+          ...updatedProtocol.data,
+          lastModified: new Date().toISOString(),
+          syncStatus: "synced",
+        };
+        this.storageManager.set(`protocol_${protocolId}`, storedProtocol);
+        this.notify("protocol_updated", storedProtocol);
+      } catch (reloadError) {
+        console.warn(
+          "Failed to reload protocol after adding task:",
+          reloadError,
+        );
+      }
+
+      this.notify("task_added", { protocolId, taskId, data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to add task to protocol";
+      this.notify("error", { type: "protocol_task_add", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async removeTaskFromProtocol(
+    protocolId: string,
+    taskId: string,
+  ): Promise<void> {
+    try {
+      this.notify("updating", { type: "protocol", id: protocolId });
+
+      await this.apiRequest(`/protocols/${protocolId}/tasks/${taskId}`, {
+        method: "DELETE",
+      });
+
+      // Invalidate local protocol cache and reload
+      this.storageManager.remove(`protocol_${protocolId}`);
+
+      // Reload protocol data to ensure consistency
+      try {
+        const updatedProtocol = await this.apiRequest<
+          ApiResponse<FullProtocol>
+        >(`/protocols/${protocolId}/full`);
+        const storedProtocol: StoredProtocol = {
+          ...updatedProtocol.data,
+          lastModified: new Date().toISOString(),
+          syncStatus: "synced",
+        };
+        this.storageManager.set(`protocol_${protocolId}`, storedProtocol);
+        this.notify("protocol_updated", storedProtocol);
+      } catch (reloadError) {
+        console.warn(
+          "Failed to reload protocol after removing task:",
+          reloadError,
+        );
+      }
+
+      this.notify("task_removed", { protocolId, taskId });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to remove task from protocol";
       this.notify("error", {
-        type: "protocol_delete",
+        type: "protocol_task_remove",
+        error: errorMessage,
+      });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async updateTaskOrder(
+    protocolId: string,
+    taskId: string,
+    orderIndex: number,
+  ): Promise<void> {
+    try {
+      this.notify("updating", { type: "protocol", id: protocolId });
+
+      await this.apiRequest(`/protocols/${protocolId}/tasks/${taskId}/order`, {
+        method: "PUT",
+        body: { order_index: orderIndex },
+      });
+
+      // Update local protocol cache if it exists
+      const localProtocol = this.storageManager.get<StoredProtocol>(
+        `protocol_${protocolId}`,
+      );
+      if (localProtocol) {
+        // Update the task order in local cache
+        const updatedTasks = localProtocol.tasks
+          .map((task) =>
+            task.task_id === taskId
+              ? { ...task, order_index: orderIndex }
+              : task,
+          )
+          .sort((a, b) => a.order_index - b.order_index);
+
+        const updatedProtocol: StoredProtocol = {
+          ...localProtocol,
+          tasks: updatedTasks,
+          lastModified: new Date().toISOString(),
+          syncStatus: "synced",
+        };
+        this.storageManager.set(`protocol_${protocolId}`, updatedProtocol);
+        this.notify("protocol_updated", updatedProtocol);
+      }
+
+      this.notify("task_reordered", { protocolId, taskId, orderIndex });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update task order";
+      this.notify("error", {
+        type: "protocol_task_reorder",
+        error: errorMessage,
+      });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async reorderProtocolTasks(
+    protocolId: string,
+    taskOrders: { task_id: string; order_index: number }[],
+  ): Promise<void> {
+    try {
+      this.notify("updating", { type: "protocol", id: protocolId });
+
+      await this.apiRequest(`/protocols/${protocolId}/tasks/reorder`, {
+        method: "PUT",
+        body: { task_orders: taskOrders },
+      });
+
+      // Update local protocol cache if it exists
+      const localProtocol = this.storageManager.get<StoredProtocol>(
+        `protocol_${protocolId}`,
+      );
+      if (localProtocol) {
+        // Update task orders in local cache
+        const updatedTasks = localProtocol.tasks
+          .map((task) => {
+            const newOrder = taskOrders.find(
+              (order) => order.task_id === task.task_id,
+            );
+            return newOrder
+              ? { ...task, order_index: newOrder.order_index }
+              : task;
+          })
+          .sort((a, b) => a.order_index - b.order_index);
+
+        const updatedProtocol: StoredProtocol = {
+          ...localProtocol,
+          tasks: updatedTasks,
+          lastModified: new Date().toISOString(),
+          syncStatus: "synced",
+        };
+        this.storageManager.set(`protocol_${protocolId}`, updatedProtocol);
+        this.notify("protocol_updated", updatedProtocol);
+      }
+
+      this.notify("tasks_reordered", { protocolId, taskOrders });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to reorder protocol tasks";
+      this.notify("error", {
+        type: "protocol_tasks_reorder",
+        error: errorMessage,
+      });
+      throw new Error(errorMessage);
+    }
+  }
+
+  // ===== TASK OPERATIONS =====
+
+  async getTasks(
+    filters: TaskFilters = {},
+  ): Promise<Task[] | TaskWithRelations[]> {
+    try {
+      this.notify("loading", { type: "tasks" });
+
+      const params = new URLSearchParams();
+      if (filters.type) params.set("type", filters.type);
+      if (filters.user_only) params.set("user_only", "true");
+      if (filters.with_relations) params.set("with_relations", "true");
+
+      const endpoint = `/tasks${params.toString() ? `?${params.toString()}` : ""}`;
+      const response =
+        await this.apiRequest<ApiListResponse<Task | TaskWithRelations>>(
+          endpoint,
+        );
+
+      this.notify("loaded", { type: "tasks" });
+      return response.data;
+    } catch (error) {
+      this.notify("error", {
+        type: "tasks_load",
         error: error instanceof Error ? error.message : "Unknown error",
       });
       throw error;
     }
   }
 
-  // ===== SHARED CONTENT OPERATIONS =====
+  async getTask(
+    id: string,
+    withRelations: boolean = false,
+  ): Promise<Task | TaskWithRelations> {
+    try {
+      this.notify("loading", { type: "task", id });
 
-  async getSensors(forceRefresh: boolean = false): Promise<Sensor[]> {
-    const cacheKey = "sensors";
-    const cached = this.cacheManager.get<Sensor[]>(cacheKey);
+      const params = withRelations ? "?with_relations=true" : "";
+      const response = await this.apiRequest<
+        ApiResponse<Task | TaskWithRelations>
+      >(`/tasks/${id}${params}`);
 
-    if (!forceRefresh && cached) {
-      return cached;
+      this.notify("loaded", { type: "task", id });
+      return response.data;
+    } catch (error) {
+      this.notify("error", {
+        type: "task_load",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
     }
+  }
 
+  async searchTasks(query: string): Promise<Task[]> {
+    try {
+      this.notify("loading", { type: "tasks" });
+
+      const response = await this.apiRequest<ApiListResponse<Task>>(
+        `/tasks/search/${encodeURIComponent(query)}`,
+      );
+
+      this.notify("loaded", { type: "tasks" });
+      return response.data;
+    } catch (error) {
+      this.notify("error", {
+        type: "tasks_search",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }
+
+  async createTask(data: CreateTaskData): Promise<Task> {
+    try {
+      this.notify("creating", { type: "task" });
+
+      const response = await this.apiRequest<ApiResponse<Task>>("/tasks", {
+        method: "POST",
+        body: data,
+      });
+
+      this.notify("created", { type: "task", data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create task";
+      this.notify("error", { type: "task_create", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async updateTask(id: string, data: UpdateTaskData): Promise<Task> {
+    try {
+      this.notify("updating", { type: "task", id });
+
+      const response = await this.apiRequest<ApiResponse<Task>>(
+        `/tasks/${id}`,
+        {
+          method: "PUT",
+          body: data,
+        },
+      );
+
+      this.notify("updated", { type: "task", data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update task";
+      this.notify("error", { type: "task_update", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    try {
+      this.notify("deleting", { type: "task", id });
+
+      await this.apiRequest(`/tasks/${id}`, {
+        method: "DELETE",
+      });
+
+      this.notify("deleted", { type: "task", id });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to delete task";
+      this.notify("error", { type: "task_delete", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async getTaskSensors(taskId: string): Promise<Sensor[]> {
+    try {
+      const response = await this.apiRequest<ApiListResponse<Sensor>>(
+        `/tasks/${taskId}/sensors`,
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to get task sensors",
+      );
+    }
+  }
+
+  async getTaskDomains(taskId: string): Promise<Domain[]> {
+    try {
+      const response = await this.apiRequest<ApiListResponse<Domain>>(
+        `/tasks/${taskId}/domains`,
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to get task domains",
+      );
+    }
+  }
+
+  // ===== SENSOR OPERATIONS =====
+
+  async getSensors(filters: SensorFilters = {}): Promise<Sensor[]> {
     try {
       this.notify("loading", { type: "sensors" });
 
-      const response = await this.apiRequest<{
-        data: Sensor[];
-        success: boolean;
-        message: string;
-      }>("/sensors");
-      const sensors = response.data;
-      this.cacheManager.set(cacheKey, sensors);
+      const params = new URLSearchParams();
+      if (filters.category) params.set("category", filters.category);
+      if (filters.user_only) params.set("user_only", "true");
 
-      this.notify("loaded", { type: "sensors", count: sensors.length });
-      return sensors;
+      const endpoint = filters.user_only
+        ? "/sensors"
+        : `/sensors${params.toString() ? `?${params.toString()}` : ""}`;
+
+      const response = await this.apiRequest<ApiListResponse<Sensor>>(endpoint);
+
+      this.notify("loaded", { type: "sensors" });
+      return response.data;
     } catch (error) {
-      if (cached) {
-        this.notify("using_cached", { type: "sensors" });
-        return cached;
-      }
-
       this.notify("error", {
         type: "sensors_load",
         error: error instanceof Error ? error.message : "Unknown error",
@@ -407,204 +835,210 @@ export class DataProvider {
     }
   }
 
-  async getSections(forceRefresh: boolean = false): Promise<SharedSection[]> {
-    const cacheKey = "sections";
-    const cached = this.cacheManager.get<SharedSection[]>(cacheKey);
-
-    if (!forceRefresh && cached) {
-      return cached;
-    }
-
+  async getPublicSensors(): Promise<Sensor[]> {
     try {
-      this.notify("loading", { type: "sections" });
-
-      const response = await this.apiRequest<{
-        data: SharedSection[];
-        success: boolean;
-        message: string;
-      }>("/sections");
-      const sections = response.data;
-      this.cacheManager.set(cacheKey, sections);
-
-      this.notify("loaded", { type: "sections", count: sections.length });
-      return sections;
+      const response =
+        await this.apiRequest<ApiListResponse<Sensor>>("/sensors/public");
+      return response.data;
     } catch (error) {
-      if (cached) {
-        this.notify("using_cached", { type: "sections" });
-        return cached;
-      }
-
-      this.notify("error", {
-        type: "sections_load",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      throw error;
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to get public sensors",
+      );
     }
   }
 
-  async getSubsections(
-    forceRefresh: boolean = false,
-  ): Promise<SharedSubsection[]> {
-    const cacheKey = "subsections";
-    const cached = this.cacheManager.get<SharedSubsection[]>(cacheKey);
-
-    if (!forceRefresh && cached) {
-      return cached;
-    }
-
+  async searchSensors(query: string): Promise<Sensor[]> {
     try {
-      this.notify("loading", { type: "subsections" });
-
-      const response = await this.apiRequest<{
-        data: SharedSubsection[];
-        success: boolean;
-        message: string;
-      }>("/subsections");
-      const subsections = response.data;
-      this.cacheManager.set(cacheKey, subsections);
-
-      this.notify("loaded", { type: "subsections", count: subsections.length });
-      return subsections;
+      const response = await this.apiRequest<ApiListResponse<Sensor>>(
+        `/sensors/search/${encodeURIComponent(query)}`,
+      );
+      return response.data;
     } catch (error) {
-      if (cached) {
-        this.notify("using_cached", { type: "subsections" });
-        return cached;
-      }
-
-      this.notify("error", {
-        type: "subsections_load",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      throw error;
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to search sensors",
+      );
     }
   }
 
-  async createSensor(sensorData: CreateSensorData): Promise<Sensor> {
+  async createSensor(data: CreateSensorData): Promise<Sensor> {
     try {
       this.notify("creating", { type: "sensor" });
 
-      const response = await this.apiRequest<{
-        data: Sensor;
-        success: boolean;
-        message: string;
-      }>("/sensors", {
+      const response = await this.apiRequest<ApiResponse<Sensor>>("/sensors", {
         method: "POST",
-        body: sensorData,
+        body: data,
       });
-      const sensor = response.data;
 
-      // Update cache with new sensor
-      const cached = this.cacheManager.get<Sensor[]>("sensors");
-      if (cached) {
-        cached.push(sensor);
-        this.cacheManager.set("sensors", cached);
-      }
-
-      this.notify("created", { type: "sensor", id: sensor.id });
-      return sensor;
+      this.notify("created", { type: "sensor", data: response.data });
+      return response.data;
     } catch (error) {
-      this.notify("error", {
-        type: "sensor_create",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      throw error;
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create sensor";
+      this.notify("error", { type: "sensor_create", error: errorMessage });
+      throw new Error(errorMessage);
     }
   }
 
-  async createSection(sectionData: CreateSectionData): Promise<SharedSection> {
+  async updateSensor(id: string, data: UpdateSensorData): Promise<Sensor> {
     try {
-      this.notify("creating", { type: "section" });
+      this.notify("updating", { type: "sensor", id });
 
-      const response = await this.apiRequest<{
-        data: SharedSection;
-        success: boolean;
-        message: string;
-      }>("/sections", {
-        method: "POST",
-        body: sectionData,
-      });
-      const section = response.data;
+      const response = await this.apiRequest<ApiResponse<Sensor>>(
+        `/sensors/${id}`,
+        {
+          method: "PUT",
+          body: data,
+        },
+      );
 
-      // Update cache with new section
-      const cached = this.cacheManager.get<SharedSection[]>("sections");
-      if (cached) {
-        this.cacheManager.set("sections", [...cached, section]);
-      }
-
-      this.notify("created", { type: "section", id: section.id });
-      return section;
+      this.notify("updated", { type: "sensor", data: response.data });
+      return response.data;
     } catch (error) {
-      this.notify("error", {
-        type: "section_create",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      throw error;
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update sensor";
+      this.notify("error", { type: "sensor_update", error: errorMessage });
+      throw new Error(errorMessage);
     }
   }
 
-  async createSubsection(
-    subsectionData: CreateSubsectionData,
-  ): Promise<SharedSubsection> {
+  async deleteSensor(id: string): Promise<void> {
     try {
-      this.notify("creating", { type: "subsection" });
+      this.notify("deleting", { type: "sensor", id });
 
-      const response = await this.apiRequest<{
-        data: SharedSubsection;
-        success: boolean;
-        message: string;
-      }>("/subsections", {
-        method: "POST",
-        body: subsectionData,
+      await this.apiRequest(`/sensors/${id}`, {
+        method: "DELETE",
       });
-      const subsection = response.data;
 
-      // Update cache with new subsection
-      const cached = this.cacheManager.get<SharedSubsection[]>("subsections");
-      if (cached) {
-        this.cacheManager.set("subsections", [...cached, subsection]);
-      }
+      this.notify("deleted", { type: "sensor", id });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to delete sensor";
+      this.notify("error", { type: "sensor_delete", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
 
-      this.notify("created", { type: "subsection", id: subsection.id });
-      return subsection;
+  // ===== DOMAIN OPERATIONS =====
+
+  async getDomains(filters: DomainFilters = {}): Promise<Domain[]> {
+    try {
+      this.notify("loading", { type: "domains" });
+
+      const params = new URLSearchParams();
+      if (filters.user_only) params.set("user_only", "true");
+
+      const endpoint = `/domains${params.toString() ? `?${params.toString()}` : ""}`;
+      const response = await this.apiRequest<ApiListResponse<Domain>>(endpoint);
+
+      this.notify("loaded", { type: "domains" });
+      return response.data;
     } catch (error) {
       this.notify("error", {
-        type: "subsection_create",
+        type: "domains_load",
         error: error instanceof Error ? error.message : "Unknown error",
       });
       throw error;
     }
   }
 
-  // ===== SYNC MANAGEMENT =====
+  async getPublicDomains(): Promise<Domain[]> {
+    try {
+      const response =
+        await this.apiRequest<ApiListResponse<Domain>>("/domains/public");
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Failed to get public domains",
+      );
+    }
+  }
 
-  private addToSyncQueue(
-    type: SyncQueueItem["type"],
-    id: string,
-    data: any,
-    timestamp: string,
-  ): void {
-    // Remove existing entry for this item
+  async createDomain(data: CreateDomainData): Promise<Domain> {
+    try {
+      this.notify("creating", { type: "domain" });
+
+      const response = await this.apiRequest<ApiResponse<Domain>>("/domains", {
+        method: "POST",
+        body: data,
+      });
+
+      this.notify("created", { type: "domain", data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create domain";
+      this.notify("error", { type: "domain_create", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async updateDomain(id: string, data: UpdateDomainData): Promise<Domain> {
+    try {
+      this.notify("updating", { type: "domain", id });
+
+      const response = await this.apiRequest<ApiResponse<Domain>>(
+        `/domains/${id}`,
+        {
+          method: "PUT",
+          body: data,
+        },
+      );
+
+      this.notify("updated", { type: "domain", data: response.data });
+      return response.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update domain";
+      this.notify("error", { type: "domain_update", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  async deleteDomain(id: string): Promise<void> {
+    try {
+      this.notify("deleting", { type: "domain", id });
+
+      await this.apiRequest(`/domains/${id}`, {
+        method: "DELETE",
+      });
+
+      this.notify("deleted", { type: "domain", id });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to delete domain";
+      this.notify("error", { type: "domain_delete", error: errorMessage });
+      throw new Error(errorMessage);
+    }
+  }
+
+  // ===== SYNC OPERATIONS =====
+
+  private addToSyncQueue(item: SyncQueueItem): void {
+    // Remove existing item with same type and id
     this.syncQueue = this.syncQueue.filter(
-      (item) => !(item.type === type && item.id === id),
+      (existing) => !(existing.type === item.type && existing.id === item.id),
     );
 
-    // Add new entry
-    this.syncQueue.push({
-      type,
-      id,
-      data,
-      timestamp,
-      attempts: 0,
-    });
+    // Add new item
+    this.syncQueue.push(item);
+
+    // Save to storage
+    this.storageManager.set("syncQueue", this.syncQueue);
+
+    // Debounced sync
+    this.debouncedSync();
   }
 
   private debouncedSync(): void {
     if (this.syncTimeout) {
       clearTimeout(this.syncTimeout);
     }
+
     this.syncTimeout = setTimeout(() => {
-      this.syncPendingChanges();
-    }, 3000); // 3 second delay
+      if (this.isOnline) {
+        this.syncPendingChanges();
+      }
+    }, 1000);
   }
 
   async syncPendingChanges(): Promise<void> {
@@ -612,82 +1046,46 @@ export class DataProvider {
       return;
     }
 
-    this.notify("syncing", { count: this.syncQueue.length });
+    this.notify("syncing");
 
-    const syncPromises = this.syncQueue.map(async (item) => {
+    const failedItems: SyncQueueItem[] = [];
+
+    for (const item of this.syncQueue) {
       try {
-        if (item.type === "protocol") {
-          await this.apiRequest(`/protocols/${item.id}`, {
-            method: "PUT",
-            body: item.data,
-          });
-
-          // Update local storage to mark as synced
-          const localProtocol = this.storageManager.get<StoredProtocol>(
-            `protocol_${item.id}`,
-          );
-          if (localProtocol) {
-            localProtocol.syncStatus = "synced";
-            localProtocol.lastSyncedAt = new Date().toISOString();
-            this.storageManager.set(`protocol_${item.id}`, localProtocol);
-          }
-        }
-        return { success: true, id: item.id };
+        // Implement sync logic based on item type and action
+        // This is a simplified version - in practice you'd need more detailed sync logic
+        await this.performSyncAction(item);
       } catch (error) {
+        console.error("Sync failed for item:", item, error);
         item.attempts = (item.attempts || 0) + 1;
-        return {
-          success: false,
-          id: item.id,
-          error: error instanceof Error ? error.message : "Unknown error",
-          attempts: item.attempts,
-        };
+
+        // Retry up to 3 times
+        if (item.attempts < 3) {
+          failedItems.push(item);
+        }
       }
-    });
-
-    const results = await Promise.allSettled(syncPromises);
-    const successful = results
-      .filter(
-        (r): r is PromiseFulfilledResult<{ success: true; id: string }> =>
-          r.status === "fulfilled" && r.value.success,
-      )
-      .map((r) => r.value);
-
-    const failed = results
-      .filter(
-        (
-          r,
-        ): r is PromiseFulfilledResult<{
-          success: false;
-          id: string;
-          error: string;
-          attempts: number;
-        }> => r.status === "fulfilled" && !r.value.success,
-      )
-      .map((r) => r.value);
-
-    // Remove successfully synced items from queue
-    this.syncQueue = this.syncQueue.filter(
-      (item) => !successful.some((s) => s.id === item.id),
-    );
-
-    // Remove items that have failed too many times (max 3 attempts)
-    this.syncQueue = this.syncQueue.filter((item) => (item.attempts || 0) < 3);
-
-    if (successful.length > 0) {
-      this.notify("synced", { count: successful.length });
     }
 
-    if (failed.length > 0) {
-      this.notify("sync_failed", { count: failed.length });
+    this.syncQueue = failedItems;
+    this.storageManager.set("syncQueue", this.syncQueue);
+
+    if (failedItems.length > 0) {
+      this.notify("sync_failed", { failedCount: failedItems.length });
+    } else {
+      this.notify("synced");
     }
   }
 
-  // ===== UTILITY METHODS =====
+  private async performSyncAction(item: SyncQueueItem): Promise<void> {
+    // This would contain the actual sync logic for each item type
+    // For now, this is a placeholder
+    console.log("Syncing item:", item);
+  }
 
-  getCacheInfo(
-    key: string,
-  ): { timestamp: string; age: number; size: number } | null {
-    return this.cacheManager.getInfo(key);
+  // ===== CACHE & STATUS =====
+
+  getCacheInfo(): any {
+    return this.cacheManager.getStats();
   }
 
   clearCache(key?: string): void {
@@ -702,27 +1100,32 @@ export class DataProvider {
   getStatus(): DataProviderStatus {
     return {
       online: this.isOnline,
-      authenticated: this.authManager.isAuthenticated(),
+      authenticated: this.isAuthenticated(),
       pendingSync: this.syncQueue.length,
       cacheKeys: this.cacheManager.getKeys(),
       tokenExpiry: this.authManager.getTokenExpiry() || undefined,
     };
   }
 
-  /**
-   * Clean up resources
-   */
   destroy(): void {
-    if (this.syncTimeout) {
-      clearTimeout(this.syncTimeout);
-    }
     if (this.periodicSyncInterval) {
       clearInterval(this.periodicSyncInterval);
     }
-    this.listeners.clear();
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout);
+    }
+    this.listeners = [];
+    this.syncQueue = [];
   }
 }
 
-// Create and export singleton instance
-export const dataProvider = new DataProvider();
-export default dataProvider;
+// Create singleton instance
+const storageManager = new StorageManager();
+const cacheManager = new CacheManager();
+const authManager = new AuthManager(storageManager);
+export const dataProvider = new DataProvider(
+  process.env.REACT_APP_API_URL || "http://localhost:3001",
+  storageManager,
+  cacheManager,
+  authManager,
+);

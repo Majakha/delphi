@@ -1,42 +1,118 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useDataProvider";
+import { Eye, EyeOff, User, Mail, Lock } from "lucide-react";
 
 const Login: React.FC = () => {
-  const [password, setPassword] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [formData, setFormData] = useState({
+    username: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
   const [showPassword, setShowPassword] = useState(false);
-  const { login, loading, error, clearError } = useAuth();
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const { login, register, loading, error, clearError } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.trim()) {
+
+    if (isRegistering) {
+      // Registration validation
+      if (formData.password !== formData.confirmPassword) {
+        return; // Error will be shown in validation
+      }
+
+      if (formData.password.length < 6) {
+        return; // Error will be shown in validation
+      }
+
       try {
-        await login(password.trim());
-        // Login successful - App component will handle the redirect
+        await register({
+          username: formData.username.trim(),
+          email: formData.email.trim(),
+          password: formData.password,
+        });
+        // Switch to login mode after successful registration
+        setIsRegistering(false);
+        setFormData({
+          username: "",
+          email: "",
+          password: "",
+          confirmPassword: "",
+        });
       } catch (err) {
-        // Error is already handled by useAuth hook
-        console.error("Login failed:", err);
+        console.error("Registration failed:", err);
+      }
+    } else {
+      // Login
+      const loginField = formData.username.trim();
+      if (loginField && formData.password) {
+        try {
+          await login({
+            username: loginField, // Can be username or email
+            password: formData.password,
+          });
+        } catch (err) {
+          console.error("Login failed:", err);
+        }
       }
     }
   };
 
-  // Clear any previous errors when component mounts or password changes
+  // Clear any previous errors when component mounts or form changes
   useEffect(() => {
     if (error && clearError) {
       const timer = setTimeout(() => {
         clearError();
-      }, 5000); // Clear error after 5 seconds
-
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [error, clearError]);
 
-  // Clear error when user starts typing
-  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value);
+  const handleInputChange = (field: string, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
     if (error && clearError) {
       clearError();
     }
   };
+
+  const toggleMode = () => {
+    setIsRegistering(!isRegistering);
+    setFormData({
+      username: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+    });
+    if (error && clearError) {
+      clearError();
+    }
+  };
+
+  // Validation helpers
+  const isValidEmail = (email: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  };
+
+  const getPasswordStrength = (password: string) => {
+    if (password.length < 6) return "weak";
+    if (password.length < 10) return "medium";
+    return "strong";
+  };
+
+  const passwordsMatch = formData.password === formData.confirmPassword;
+  const isFormValid = isRegistering
+    ? formData.username.trim() &&
+      formData.email.trim() &&
+      isValidEmail(formData.email) &&
+      formData.password.length >= 6 &&
+      passwordsMatch
+    : formData.username.trim() && formData.password;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -46,7 +122,9 @@ const Login: React.FC = () => {
             Delphi Protocol Builder
           </h2>
           <p className="mt-2 text-sm text-gray-600">
-            Enter your password to access the protocol builder
+            {isRegistering
+              ? "Create your account to start building protocols"
+              : "Sign in to access your protocol builder"}
           </p>
         </div>
       </div>
@@ -54,6 +132,76 @@ const Login: React.FC = () => {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           <form className="space-y-6" onSubmit={handleSubmit}>
+            {/* Username field */}
+            <div>
+              <label
+                htmlFor="username"
+                className="block text-sm font-medium text-gray-700"
+              >
+                {isRegistering ? "Username" : "Username or Email"}
+              </label>
+              <div className="mt-1 relative">
+                <input
+                  id="username"
+                  name="username"
+                  type="text"
+                  autoComplete={isRegistering ? "username" : "username email"}
+                  required
+                  className="appearance-none block w-full px-3 py-2 pl-10 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  placeholder={
+                    isRegistering ? "Enter username" : "Enter username or email"
+                  }
+                  value={formData.username}
+                  onChange={(e) =>
+                    handleInputChange("username", e.target.value)
+                  }
+                  disabled={loading}
+                />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                  <User className="h-5 w-5 text-gray-400" />
+                </div>
+              </div>
+            </div>
+
+            {/* Email field (registration only) */}
+            {isRegistering && (
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Email Address
+                </label>
+                <div className="mt-1 relative">
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    className={`appearance-none block w-full px-3 py-2 pl-10 border rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+                      formData.email && !isValidEmail(formData.email)
+                        ? "border-red-300"
+                        : "border-gray-300"
+                    }`}
+                    placeholder="Enter email address"
+                    value={formData.email}
+                    onChange={(e) => handleInputChange("email", e.target.value)}
+                    disabled={loading}
+                  />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                    <Mail className="h-5 w-5 text-gray-400" />
+                  </div>
+                </div>
+                {formData.email && !isValidEmail(formData.email) && (
+                  <p className="mt-1 text-sm text-red-600">
+                    Please enter a valid email address
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Password field */}
             <div>
               <label
                 htmlFor="password"
@@ -66,45 +214,136 @@ const Login: React.FC = () => {
                   id="password"
                   name="password"
                   type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
+                  autoComplete={
+                    isRegistering ? "new-password" : "current-password"
+                  }
                   required
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={handlePasswordChange}
+                  className="appearance-none block w-full px-3 py-2 pl-10 pr-10 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  placeholder="Enter password"
+                  value={formData.password}
+                  onChange={(e) =>
+                    handleInputChange("password", e.target.value)
+                  }
                   disabled={loading}
                 />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
                 <button
                   type="button"
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
                   disabled={loading}
                 >
-                  <svg
-                    className="h-5 w-5 text-gray-400 hover:text-gray-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    {showPassword ? (
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"
-                      />
-                    ) : (
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                    )}
-                  </svg>
+                  {showPassword ? (
+                    <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                  ) : (
+                    <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                  )}
                 </button>
               </div>
+              {isRegistering && formData.password && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">
+                      Password strength:
+                    </span>
+                    <span
+                      className={`text-sm font-medium ${
+                        getPasswordStrength(formData.password) === "weak"
+                          ? "text-red-600"
+                          : getPasswordStrength(formData.password) === "medium"
+                            ? "text-yellow-600"
+                            : "text-green-600"
+                      }`}
+                    >
+                      {getPasswordStrength(formData.password)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex space-x-1">
+                    {[1, 2, 3].map((level) => (
+                      <div
+                        key={level}
+                        className={`h-1 flex-1 rounded ${
+                          (getPasswordStrength(formData.password) === "weak" &&
+                            level === 1) ||
+                          (getPasswordStrength(formData.password) ===
+                            "medium" &&
+                            level <= 2) ||
+                          (getPasswordStrength(formData.password) ===
+                            "strong" &&
+                            level <= 3)
+                            ? getPasswordStrength(formData.password) === "weak"
+                              ? "bg-red-400"
+                              : getPasswordStrength(formData.password) ===
+                                  "medium"
+                                ? "bg-yellow-400"
+                                : "bg-green-400"
+                            : "bg-gray-200"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  {formData.password.length < 6 && (
+                    <p className="mt-1 text-sm text-red-600">
+                      Password must be at least 6 characters long
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* Confirm Password field (registration only) */}
+            {isRegistering && (
+              <div>
+                <label
+                  htmlFor="confirmPassword"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Confirm Password
+                </label>
+                <div className="mt-1 relative">
+                  <input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    type={showConfirmPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    required
+                    className={`appearance-none block w-full px-3 py-2 pl-10 pr-10 border rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+                      formData.confirmPassword && !passwordsMatch
+                        ? "border-red-300"
+                        : "border-gray-300"
+                    }`}
+                    placeholder="Confirm password"
+                    value={formData.confirmPassword}
+                    onChange={(e) =>
+                      handleInputChange("confirmPassword", e.target.value)
+                    }
+                    disabled={loading}
+                  />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                    <Lock className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    disabled={loading}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    ) : (
+                      <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </button>
+                </div>
+                {formData.confirmPassword && !passwordsMatch && (
+                  <p className="mt-1 text-sm text-red-600">
+                    Passwords do not match
+                  </p>
+                )}
+              </div>
+            )}
 
             {error && (
               <div className="rounded-md bg-red-50 p-4 border border-red-200">
@@ -153,7 +392,7 @@ const Login: React.FC = () => {
             <div>
               <button
                 type="submit"
-                disabled={loading || !password.trim()}
+                disabled={loading || !isFormValid}
                 className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
@@ -177,10 +416,10 @@ const Login: React.FC = () => {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       />
                     </svg>
-                    Signing in...
+                    {isRegistering ? "Creating account..." : "Signing in..."}
                   </>
                 ) : (
-                  "Sign in"
+                  <>{isRegistering ? "Create Account" : "Sign In"}</>
                 )}
               </button>
             </div>
@@ -188,11 +427,28 @@ const Login: React.FC = () => {
 
           <div className="mt-6">
             <div className="text-center">
+              <button
+                type="button"
+                onClick={toggleMode}
+                disabled={loading}
+                className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
+              >
+                {isRegistering
+                  ? "Already have an account? Sign in"
+                  : "Don't have an account? Create one"}
+              </button>
+            </div>
+
+            <div className="mt-4 text-center">
               <p className="text-sm text-gray-500">
                 Secure access to protocol building tools
               </p>
               {loading && (
-                <p className="text-xs text-blue-600 mt-2">Authenticating...</p>
+                <p className="text-xs text-blue-600 mt-2">
+                  {isRegistering
+                    ? "Creating your account..."
+                    : "Authenticating..."}
+                </p>
               )}
             </div>
           </div>
